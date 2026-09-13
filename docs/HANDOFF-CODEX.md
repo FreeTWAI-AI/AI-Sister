@@ -215,9 +215,10 @@ gh run list --limit 3 --json headSha,status,conclusion \
 
 #42 已在 alpha.100 完成，證據見第 4.2 節。alpha.141 的 release job 已公開四個 artifact；
 Ted 已完成第一條覆蓋升級 smoke。現在照 `docs/WINDOWS-CHECKLIST.md` 一次走一個尚未勾掉
-的真 Windows 項目；目前下一條是先從系統匣暫停錄製，再問「我昨天記下的序號
-ZQX-8147-NEVER 是什麼？」來驗零命中不亂答，最後恢復錄製。Ted 尚未回報這條結果；
-不要預先勾選，也不要拿另一輪 source gate 代替正式安裝副本上的結果。
+的真 Windows 項目。固定字串 `ZQX-8147-NEVER` 已被開發對話錄到；alpha.141 正確引用今天
+的來源並拒絕把它說成昨天的記錄，但那不是零命中。下一條要先從系統匣暫停錄製，確認暫停後
+才在 PowerShell 產生一個從未顯示過的新 GUID，保持暫停拿它提問，最後恢復錄製。Ted 尚未
+回報這條結果；不要預先勾選，也不要拿另一輪 source gate 代替正式安裝副本上的結果。
 
 ---
 
