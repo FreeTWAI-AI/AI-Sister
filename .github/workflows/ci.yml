@@ -20,7 +20,7 @@ jobs:
       # fetch-depth: 0 是給 check-spoken-consent-is-not-older-than-the-words.py 的。
       # 它問的是「同意書的字最後一次真的變，和她唸的那 68 支最後一次真的換，哪個
       # 在前」——那是歷史問題，淺 clone 答不出來，而那一條把「答不出來」當紅。
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
@@ -451,7 +451,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
@@ -569,7 +569,7 @@ jobs:
             label: Windows root and desktop workspaces
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.88.0
       - uses: Swatinem/rust-cache@v2
 
@@ -607,7 +607,7 @@ jobs:
     env:
       MACOSX_DEPLOYMENT_TARGET: "14.0"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.88.0
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -743,7 +743,7 @@ jobs:
     env:
       SISTER_OCR_ZH_ABSENT: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -2947,7 +2947,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v4
         with:
           name: sister-windows-x64
@@ -3189,7 +3189,7 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build the release-bound static site
         run: |
           python3 -m unittest scripts/tests/test_build_website.py
