@@ -213,7 +213,9 @@ gh run list --limit 3 --json headSha,status,conclusion \
 
 #42 已在 alpha.100 完成，證據見第 4.2 節。alpha.141 的 release job 已公開四個 artifact；
 Ted 已完成第一條覆蓋升級 smoke。現在照 `docs/WINDOWS-CHECKLIST.md` 一次走一個尚未勾掉
-的真 Windows 項目；不要拿另一輪 source gate 代替正式安裝副本上的結果。
+的真 Windows 項目；目前下一條是先從系統匣暫停錄製，再問「我昨天記下的序號
+ZQX-8147-NEVER 是什麼？」來驗零命中不亂答，最後恢復錄製。Ted 尚未回報這條結果；
+不要預先勾選，也不要拿另一輪 source gate 代替正式安裝副本上的結果。
 
 ---
 
