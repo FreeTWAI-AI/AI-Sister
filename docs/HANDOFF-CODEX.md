@@ -7,6 +7,11 @@
 > **接手更正（2026-09-13）：**這份交接的第 4.2 節與原步驟 3 把 #42 誤寫成尚未
 > 實作。實際上它已由 `fbb61e2` 與 `85f6f16` 在 alpha.100 完成並出貨；PHASES 同一段
 > 後文也有完整收據。下方已改成不再指示下一位重做。
+>
+> **Codex 續接收據（2026-09-13）：**`v0.1.0-alpha.141` 已由 `9c6fbca` 切 tag 並公開；
+> tag CI 八個 job 全綠，四個 artifact 齊全。Ted 已在真 Windows 用正式 Setup 覆蓋舊版，
+> 確認舊角色、四張同意、Grok 選擇與記憶保留，且問答的本機出處可點回原截圖。精確人工
+> 驗收範圍記在 `docs/WINDOWS-CHECKLIST.md` 的 alpha.141 smoke，不把未做項目算通過。
 
 ---
 
@@ -48,11 +53,12 @@
 |---|---|
 | 這一段的執行者 | Claude Code（Opus 5, 1M context），session `e74b7a6f-34e8-4500-925c-8e0d020ac13c` |
 | 時間範圍 | 2026-09-09T05:04:30Z → 2026-09-13T05:16:53Z（UTC，約四天，中途壓縮二十餘次） |
-| 交接時的 HEAD | `9886ff5`，**已 push**，`main == origin/main`，working tree 乾淨 |
-| 交接時的 CI | `9886ff5` 的 run **還在跑**（接手第一件事就是看它）。前四顆 `b193dce`／`c9d8ea9`／`b95acc2`／`812716f` 都是 `success` |
+| 目前已出貨 HEAD | `9c6fbca`，**已 push**，tag `v0.1.0-alpha.141` |
+| alpha.141 CI | tag run 八個 job 全部 `success`；Release 已發布且四個 artifact 齊全 |
 | 本機閘門 | 本機的 gates-all.sh（見第 7 節，**不在 repo 裡**）報 **通過 52 條，失敗 0 條** |
-| 已公開的最後一版 | `v0.1.0-alpha.140`，published 2026-09-12T20:46:04Z |
-| **未出貨的量** | `v0.1.0-alpha.140..HEAD` = **23 顆 commit**，全部還沒進任何 tag |
+| 已公開的最後一版 | `v0.1.0-alpha.141`，published 2026-09-13T07:27:40Z |
+| alpha.141 真機 | 正式 Setup 覆蓋成功；舊 persona／同意／Grok／記憶保留，本機出處可點回原截圖 |
+| alpha.141 後續 | 只有上述真機驗收 receipt 的文件更新，沒有產品程式碼或新出貨內容 |
 
 ---
 
@@ -177,7 +183,7 @@ exit criterion 仍未勾，是因為同站 path、redirect 與當場按的邊界
 
 ## 5. 下一步最小可驗證步驟（照順序，打開就能做）
 
-### 步驟 1（最小）：確認交接點的 CI
+### 步驟 1（已完成）：確認交接點的 CI
 
 ```bash
 cd /home/ted-h/projects/AI-Sister
@@ -189,7 +195,7 @@ gh run list --limit 3 --json headSha,status,conclusion \
 `fetch-depth: 0` 那個改動，或新閘門 `check-spoken-consent-is-not-older-than-the-words.py`
 在 runner 上拿不到歷史——那一條**設計成「問不到就紅」**，不是 bug。
 
-### 步驟 2：把 23 顆未出貨的 commit 切成 `v0.1.0-alpha.141`
+### 步驟 2（已完成）：把 23 顆未出貨的 commit 切成 `v0.1.0-alpha.141`
 
 版號散在 **7 個檔**（`check-release-version.py` 會全部對一次）：
 `Cargo.toml`、`Cargo.lock`、`apps/desktop/src-tauri/Cargo.toml`、
@@ -203,12 +209,11 @@ gh run list --limit 3 --json headSha,status,conclusion \
 假紅）。打完 tag 要回頭確認 release job 真的跑了——linux job 一紅，release job 會
 被靜靜跳過。
 
-### 步驟 3：不要重做 #42；把正式 artifact 交給 Ted 實測
+### 步驟 3（進行中）：不要重做 #42；在正式 artifact 上逐項實測
 
-#42 已在 alpha.100 完成，證據見第 4.2 節。alpha.141 的 release job 公開四個 artifact
-後，下一個產品驗收點是讓 Ted 下載正式 `AI-Sister-Setup.exe`，照
-`docs/WINDOWS-CHECKLIST.md` 走尚未勾掉的真 Windows 項目；不要拿另一輪 source gate
-代替正式安裝副本上的結果。
+#42 已在 alpha.100 完成，證據見第 4.2 節。alpha.141 的 release job 已公開四個 artifact；
+Ted 已完成第一條覆蓋升級 smoke。現在照 `docs/WINDOWS-CHECKLIST.md` 一次走一個尚未勾掉
+的真 Windows 項目；不要拿另一輪 source gate 代替正式安裝副本上的結果。
 
 ---
 
@@ -324,12 +329,10 @@ capture＋`.deb`）、`msrv`（Rust 1.88）、`macos_spike`、`windows`、`relea
 
 ## 8. 接手後的第一個動作
 
-1. 跑 `bash /home/ted-h/tmp-tests/gates-all.sh /home/ted-h/projects/AI-Sister`，
-   確認本機是 52/0。
-2. 看 `9886ff5` 的 CI。
-3. 讀 `AGENTS.md` 第零節（全域交付與產品文案規則）。
-4. 讀 `docs/PHASES.md` 最前面的 Release 1.0 合約。
-5. 然後照第 5 節的步驟 1 → 2 → 3 做下去。
+1. 讀 `AGENTS.md` 第零節（全域交付與產品文案規則）。
+2. 讀 `docs/PHASES.md` 最前面的 Release 1.0 合約。
+3. 不重切 alpha.141、不重掃 compliance；沿用第 5 節步驟 3，讓 Ted 在正式安裝副本上
+   一次驗 `docs/WINDOWS-CHECKLIST.md` 的一條真機邊界，精確記下通過或失敗的範圍。
 
 **不要**開新大軸、不要重掃 compliance、不要動 `docs/RELEASE-NOTES.md` 的歷史區段、
 不要碰簽章憑證、不要把錄音那邊的東西搬進 repo。
