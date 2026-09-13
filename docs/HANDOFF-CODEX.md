@@ -126,13 +126,15 @@ Developer ID、notarization 與真機 TCC 收據。
 
 ## 4. 進行中／未完成，以及關鍵檔案
 
-### 4.1 立刻的（無人認領，接手就該處理）
+### 4.1 原交接的兩件立刻工作已收掉
 
-- **`9886ff5` 的 CI 還沒收工。** 它動到 `.github/workflows/ci.yml` 的 checkout
-  （加 `fetch-depth: 0`），是這批唯一改 CI 設定的一顆，也是新閘門第一次在 runner
-  上跑。**先看它。**
-- **23 顆 commit 沒出貨。** `v0.1.0-alpha.140` 之後累積的東西全部只在 `main` 上。
-  Ted 的節奏是「有執行檔他就下載測，沒有就繼續推；做完一段就切 tag」。
+- `9886ff5` 的 CI 已是 `completed/success`；`fetch-depth: 0` 與新閘門第一次在 runner
+  上執行都通過。
+- `v0.1.0-alpha.140` 後的 23 顆 commit 已由 `9c6fbca` 出貨為
+  `v0.1.0-alpha.141`；tag CI 八個 job 全綠，Release 的四個 artifact 齊全。
+- alpha.141 後的 `7472cea`、`e84ae97` 只記真 Windows 覆蓋升級 receipt，以及預先放好
+  但仍未勾選的零命中 receipt 模板；沒有尚待出貨的產品程式碼。現在的下一步仍是第 5 節
+  步驟 3，不重切同一版。
 
 ### 4.2 交接更正：#42 的 URL 設定已完成
 
