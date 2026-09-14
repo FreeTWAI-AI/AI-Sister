@@ -58,7 +58,7 @@
 | 本機閘門 | 本機的 gates-all.sh（見第 7 節，**不在 repo 裡**）報 **通過 52 條，失敗 0 條** |
 | 已公開的最後一版 | `v0.1.0-alpha.141`，published 2026-09-13T07:27:40Z |
 | alpha.141 真機 | 正式 Setup 覆蓋成功；舊 persona／同意／Grok／記憶保留，本機出處可點回原截圖 |
-| alpha.141 後續 | 真機 receipt／交接更新；`3567d51` 將七個 CI checkout 升到 v7。沒有產品程式碼或新出貨內容 |
+| alpha.141 後續 | 真機 receipt／交接更新；CI 的 GitHub Actions 已升到 Node 24 majors，branch run `34793019345` 六個平台 job 全綠。沒有產品程式碼或新出貨內容 |
 
 ---
 
@@ -133,8 +133,12 @@ Developer ID、notarization 與真機 TCC 收據。
 - `v0.1.0-alpha.140` 後的 23 顆 commit 已由 `9c6fbca` 出貨為
   `v0.1.0-alpha.141`；tag CI 八個 job 全綠，Release 的四個 artifact 齊全。
 - alpha.141 後的 `7472cea`、`e84ae97`、`77eba17`、`dfbd3f0` 只記真 Windows receipt、
-  修正會自我污染的零命中 fixture 與整理交接；`3567d51` 將七個 CI checkout 從 v4 升到
-  Node 24 的 v7。沒有尚待出貨的產品程式碼。現在的下一步仍是第 5 節步驟 3，不重切同一版。
+  修正會自我污染的零命中 fixture 與整理交接。`3567d51` 將七個 checkout 升到 v7；
+  `67ca70d` 將六個 upload 升到 v7、五個 release download 升到 v8，Pages 三顆升到
+  configure v6／upload v5／deploy v5；`c645375` 同步網站 gate。branch run `34793019345`
+  六個平台 job 全綠、六個 upload 點全數成功且沒有 Node 20 annotation。Release download
+  與 Pages 只在 tag job 執行，下一個正式 tag 必須回頭確認；branch success 不冒充它們跑過。
+  沒有尚待出貨的產品程式碼。現在的下一步仍是第 5 節步驟 3，不重切同一版。
 
 ### 4.2 交接更正：#42 的 URL 設定已完成
 
