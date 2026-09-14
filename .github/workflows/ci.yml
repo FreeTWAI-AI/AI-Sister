@@ -547,7 +547,7 @@ jobs:
           SH
 
       - name: Upload Linux X11 package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ai-sister-linux-x11-amd64
           path: ${{ runner.temp }}/AI-Sister-Linux-X11-amd64.deb
@@ -715,7 +715,7 @@ jobs:
 
       - name: Upload diagnostic evidence — never a Preview release asset
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: macos-arm64-app-tree-spike-NOT-PREVIEW-${{ github.sha }}
           path: |
@@ -1268,7 +1268,7 @@ jobs:
             || { echo "::error::錄製結束了，但資料庫說不出是為什麼"; cat stopdoctor.txt; exit 1; }
 
       - name: Upload sister.exe
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sister-windows-x64
           path: target/release/sister.exe
@@ -2819,7 +2819,7 @@ jobs:
             )
 
       - name: Upload ai-sister.exe
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ai-sister-desktop-x64
           path: sister-desktop.exe
@@ -2827,7 +2827,7 @@ jobs:
           retention-days: 30
 
       - name: Upload offline Windows installer
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ai-sister-installer-x64
           path: AI-Sister-Setup.exe
@@ -2835,7 +2835,7 @@ jobs:
           retention-days: 30
 
       - name: Upload Windows signing receipt
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: windows-signing-receipt
           path: ${{ runner.temp }}/windows-signing-receipt.json
@@ -2948,19 +2948,19 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: sister-windows-x64
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: ai-sister-desktop-x64
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: ai-sister-installer-x64
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: windows-signing-receipt
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: ai-sister-linux-x11-amd64
 
@@ -3195,11 +3195,11 @@ jobs:
           python3 -m unittest scripts/tests/test_build_website.py
           python3 ./scripts/build-website.py --output ./_site
       - name: Configure GitHub Pages
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v6
       - name: Upload GitHub Pages artifact
-        uses: actions/upload-pages-artifact@v4
+        uses: actions/upload-pages-artifact@v5
         with:
           path: ./_site
       - name: Deploy GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
