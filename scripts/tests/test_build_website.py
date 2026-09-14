@@ -133,9 +133,9 @@ class WebsiteBuildTests(unittest.TestCase):
             "      name: github-pages",
             "      url: ${{ steps.deployment.outputs.page_url }}",
             "          python3 ./scripts/build-website.py --output ./_site",
-            "        uses: actions/configure-pages@v5",
-            "        uses: actions/upload-pages-artifact@v4",
-            "        uses: actions/deploy-pages@v4",
+            "        uses: actions/configure-pages@v6",
+            "        uses: actions/upload-pages-artifact@v5",
+            "        uses: actions/deploy-pages@v5",
         ]
         positions = []
         for fragment in required:
