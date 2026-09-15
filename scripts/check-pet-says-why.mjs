@@ -4366,6 +4366,84 @@ console.log("88. 三顆播放鍵的停止規則一致，而下一顆躲不掉這
   }
 }
 
+console.log("89. 條文錄音播不出來的時候，不准改用系統聲音把條文念掉");
+{
+  // SPEC：「同意書朗讀也只接受當張『念給我聽』的 trusted click，不 autoplay、
+  // 不借 Azure 或 `localService`」。前半段 §85 守著，**後半段沒有人守**——而
+  // 隔壁那條路（角色點擊台詞）**故意**有 localService fallback（見真機清單
+  // alpha.108 那一項：「single voice read 回 null／cache stale／audio play 拒絕，
+  // 確認同一次 trusted click 會嘗試 localService fallback」）。兩條路現在是分開
+  // 寫的，所以這句話是真的；擋不住的是「有人把它們合併」。
+  //
+  // 這裡最重要的是**夾具要讓 fallback 真的做得到**，否則 `localSpeaks() === 0`
+  // 是一條沒有牙齒的斷言：角色的「本機聲音」要開著、而且這台機器要有一支
+  // `localService` 的中文 voice。兩個前提都給足了，她仍然必須閉嘴。
+  const voiced = {
+    persona_read: {
+      id: "chatgpt",
+      enabled: true,
+      motion: true,
+      tap_lines: true,
+      voice_enabled: true,
+    },
+    consent_read: consentView([false, false, false, false], [false, false, false, false]),
+    persona_fixed_voice_admit: { presentation_id: "consent-voice" },
+    master_stop_presentation_begin: true,
+    master_stop_presentation_end: null,
+  };
+  const options = {
+    consentVoices: consentVoiceManifest(),
+    systemVoices: [{ name: "Hanhan", lang: "zh-TW", localService: true }],
+  };
+
+  // 鍵面那句話從 app.js 讀出來比，不要在這裡另抄一份（理由見 §85）。
+  const playLabel = /const CONSENT_LISTEN_PLAY = "([^"]+)";/u.exec(read(SRC))?.[1] ?? null;
+
+  const failed = await open(voiced, options);
+  await failed.clickElement(failed.consentListen());
+  check("前提：條文錄音真的開始播了", failed.audioPlays() === 1, failed.audioPlays());
+  failed.failAudio();
+  await tick();
+  check(
+    "錄音播放失敗不改用系統聲音把條文念掉",
+    failed.localSpeaks() === 0,
+    failed.localSpeaks(),
+  );
+  check(
+    "失敗要講出來，而且指向「自己讀文字」這條出口",
+    failed.consentResult().includes("播放失敗") && failed.consentResult().includes("讀文字"),
+    failed.consentResult(),
+  );
+  // 針取 `azure_tts_speak` 不是 `azure_*`：開機本來就會讀一次 Azure 設定狀態
+  // （`azure_tts_read`，純本機、不送東西），SPEC 那句話講的是**念**。
+  check(
+    "錄音播放失敗也不借 Azure 念條文",
+    !failed.invokes.some(({ cmd }) => cmd === "azure_tts_speak"),
+    failed.invokes.map(({ cmd }) => cmd),
+  );
+  check(
+    "失敗之後那顆鍵回到念給我聽，還按得動",
+    failed.consentListen().textContent === playLabel &&
+      failed.consentListen().disabled !== true,
+    { label: failed.consentListen().textContent, disabled: failed.consentListen().disabled },
+  );
+
+  // 「逐字稿對不上就灰掉」那一格別去那樣驗：`clickElement` 和真的瀏覽器一樣不會
+  // 把 click 送進一顆 disabled 的按鈕，所以在那裡寫 `localSpeaks() === 0` 是一條
+  // 永遠成立、什麼都沒看的斷言。那一格的牙齒在 §85（鍵真的是灰的）。
+  //
+  // 擋「有人把兩條路合併」要用原始碼守，因為那條路現在**還不存在**，行為測試看
+  // 不到不存在的東西。`body !== ""` 是 fail-closed：錨點鏽掉要紅，不要安靜略過。
+  const body = /async function playConsentSheet\(event\) \{[\s\S]*?\n\}/u.exec(read(SRC))?.[0] ?? "";
+  check(
+    "條文朗讀那條路上只有 bundled Ogg 一種聲音",
+    body !== "" &&
+      !body.includes("speakWithLocalSystemVoice") &&
+      !body.includes("azure_tts_speak"),
+    { anchored: body !== "", length: body.length },
+  );
+}
+
 /* 上面那幾行把 `diagnose_note` 從 `calls` 濾掉了。濾掉和刪掉偵測器只差一步，
  * 所以這裡量一次那條路還在：實測這一輪會經過 started／persona／bar／answered
  * 四種。只斷言「有東西」不夠——四種裡剩一種也是「有東西」。 */
