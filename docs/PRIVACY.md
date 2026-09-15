@@ -22,12 +22,13 @@ hands 沒有 HTTP client 或監聽埠；WebView 也只走 Tauri IPC，CSP 不開
 
 供 L2/L3 解讀與 S1 問答成句的螢幕 **OCR 文字原文**（不是畫面）只在你簽了第二張
 同意書、而且接好一支大腦 CLI 之後，才會交給那支你自己已經在跑的 CLI。S1 先把當前問題
-交給 CLI，讓它回最多三條自然語言查詢；AI-Sister 在 SQLite 本機代查，再送最多 12 筆
-命中來源文字及其時間、app、title、URL metadata。問題副本最多 2 KiB，圍欄內資料合計
-最多 12 KiB；CLI 不取得 DB path、SQL、整份資料庫或畫面。沒簽或沒設定就不 spawn；本機
+交給 CLI，讓它回最多三條自然語言查詢；AI-Sister 在 SQLite 本機代查，再送最多 18 筆
+命中來源文字及其時間、app、title、URL metadata；其中鄰近 L2 只送稍早生成的判讀文字、
+時間與 `kind=reading`，不送 segment、confidence、author、continues 或 open questions。問題副本最多 2 KiB，圍欄內
+資料合計最多 24 KiB；CLI 不取得 DB path、SQL、整份資料庫或畫面。沒簽或沒設定就不 spawn；本機
 零命中時 CLI 仍已處理查詢規劃，但不會再收到來源或生成無來源事實答案。外送紀錄只記
 結構和計數，不抄問題、來源或 prompt 原文。Azure TTS 不取得
-整份 OCR corpus；成句存在時只取得通過逐句本機來源驗證的 1–3 句答案正文，不取得 source
+整份 OCR corpus；成句存在時只取得通過逐句本機來源驗證的 1–6 句答案正文，不取得 source
 ref、按鈕文字、metadata 或底下重複的 facts／OCR。答案正文自己可能引用或逐字重複記憶
 內容，所以不能把「只送答案」誤寫成「不會含螢幕上的字」。
 

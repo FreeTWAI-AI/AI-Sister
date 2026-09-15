@@ -2115,6 +2115,43 @@ console.log("56b. RAG IPC 來源對不上本機候選時整份拒絕");
   }
 }
 
+console.log("56ab. 有前因後果的六句仍是一份可驗來源的答案，第七句整份拒絕");
+{
+  const groundedSentence = (n) => ({
+    text: `同一件事的第 ${n} 句。`,
+    sources: [{ ref: "fact:9", label: "畫面 #42", frame_id: 42 }],
+  });
+  const six = await open({
+    ask: answer({
+      answers: [fact({ frame_id: 42 })],
+      synthesis: { sentences: Array.from({ length: 6 }, (_, index) => groundedSentence(index + 1)) },
+    }),
+    recording_state: "recording",
+  });
+  await six.type("把前因後果講清楚");
+  check(
+    "六句與六份逐句來源完整畫出",
+    six.hits().querySelectorAll(".grounded-text").length === 6 &&
+      six.hits().querySelectorAll(".grounded-source").length === 6,
+    six.hitTexts(),
+  );
+
+  const seven = await open({
+    ask: answer({
+      answers: [fact({ frame_id: 42 })],
+      synthesis: { sentences: Array.from({ length: 7 }, (_, index) => groundedSentence(index + 1)) },
+    }),
+    recording_state: "recording",
+  });
+  await seven.type("不能塞成一篇文章");
+  check(
+    "第七句讓 renderer 拒絕整份，不畫半份",
+    seven.hits().querySelectorAll(".grounded-text").length === 0 &&
+      seven.line().includes("成句答案必須是 1 到 6 句"),
+    { line: seven.line(), hits: seven.hitTexts() },
+  );
+}
+
 console.log("56e. 一句判讀的出處說得出它是判讀");
 {
   // 這一版她第一次講得出一句**螢幕上沒寫過**的話。那一句底下的出處鍵不可以

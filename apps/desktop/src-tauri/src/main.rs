@@ -3633,14 +3633,12 @@ fn ask(question: String, shell: tauri::State<'_, Shell>) -> Result<Answer, Strin
             | sister_core::followup::FollowupDecision::CoolingDown { .. } => None,
         };
         // 每條都是已選 CLI 要求的自然語言查詢，由 AI-Sister 在本機執行。多條
-        // 查詢會依 CLI 給的順序合併並去重，最後仍守原本 facts 10／原文 20 的上限。
+        // 查詢各自保留排名，再公平合併並去重；最後仍守 facts 10／原文 20 的上限。
         const FACTS: usize = 10;
         const HITS: usize = 20;
         let mut shape = Shape::Keywords;
-        let mut facts = Vec::new();
-        let mut hits = Vec::new();
-        let mut fact_ids = HashSet::new();
-        let mut chunk_ids = HashSet::new();
+        let mut fact_batches = Vec::new();
+        let mut hit_batches = Vec::new();
         let mut facts_truncated = false;
         let mut truncated = false;
         for (index, retrieval_question) in retrieval_questions.iter().enumerate() {
@@ -3656,29 +3654,23 @@ fn ask(question: String, shell: tauri::State<'_, Shell>) -> Result<Answer, Strin
             }
             facts_truncated |= retrieval.answers_truncated;
             truncated |= retrieval.hits_truncated;
-            facts.extend(
-                retrieval
-                    .answers
-                    .into_iter()
-                    .filter(|answer| fact_ids.insert(answer.latest.id)),
-            );
-            hits.extend(
-                retrieval
-                    .hits
-                    .into_iter()
-                    .filter(|hit| chunk_ids.insert(hit.chunk_id)),
-            );
+            fact_batches.push(retrieval.answers);
+            hit_batches.push(retrieval.hits);
         }
+        // 每條查詢輪流拿第一名、第二名……。舊接線是第一條先塞滿 10／20 筆
+        // 才輪到第二條，所以 planner 特地找的「之前為什麼」與「後來怎樣」在
+        // 第一條命中夠多時永遠進不了 prompt。
+        let mut facts = sister_core::grounded_answer::merge_ranked_facts(fact_batches, FACTS + 1);
+        let mut hits = sister_core::grounded_answer::merge_ranked_hits(hit_batches, HITS + 1);
         facts_truncated |= facts.len() > FACTS;
         truncated |= hits.len() > HITS;
         facts.truncate(FACTS);
         hits.truncate(HITS);
-        let asked_chapters = if retrieval_questions.len() == 1 {
-            db.chapters_for_question(&retrieval_questions[0], sister_core::now_ms())
-                .map_err(|e| format!("{e:#}"))?
-        } else {
-            None
-        };
+        // 章節問的是**使用者原本那句話**有沒有時間範圍，不是 planner 最後回了
+        // 幾條查詢。舊版只要 CLI 加一條同義詞，`昨天下午` 的整段章節就消失。
+        let asked_chapters = db
+            .chapters_for_question(&question, now)
+            .map_err(|e| format!("{e:#}"))?;
         // **她已經想過的那幾段，排在證據最前面。**
         //
         // 解釋層平常沒事就會自己醒過來，看著剛過去那一段寫一張卡。以前答題
@@ -3687,23 +3679,80 @@ fn ask(question: String, shell: tauri::State<'_, Shell>) -> Result<Answer, Strin
         //
         // 撈不到判讀不是失敗：那只是這一段她還沒想過（或者她根本沒被開起
         // 來）。空的照樣往下走，答案就是舊的那個形狀。
-        let readings = match sister_core::grounded_answer::evidence_window(&facts, &hits) {
-            None => Vec::new(),
-            Some((from, to)) => db
-                .readings_covering(from, to, sister_core::grounded_answer::MAX_READINGS)
-                .map_err(|e| format!("{e:#}"))?
-                .iter()
-                .map(sister_core::grounded_answer::Reading::from_card)
-                .collect(),
+        let (reading_rows, readings_truncated) = match asked_chapters.as_ref() {
+            // 時間問題要橫跨原問句的整個範圍，不能只從當天最後幾張、或第一批
+            // OCR 命中旁邊取樣。
+            Some((range, _)) => db
+                .readings_spanning(
+                    range.from,
+                    range.to,
+                    sister_core::grounded_answer::MAX_READINGS,
+                )
+                .map_err(|e| format!("{e:#}"))?,
+            None => {
+                // 關鍵字可能同時命中上週和今天。各自在最相關的幾筆原文附近找
+                // 判讀，避免用最早到最晚的一個巨大窗口，把中間幾天無關的卡片
+                // 誤塞進答案。
+                const READING_ANCHORS: usize = 4;
+                const READINGS_PER_ANCHOR: usize = 2;
+                let mut anchors = Vec::with_capacity(READING_ANCHORS);
+                let mut stamps = HashSet::new();
+                let mut hit_stamps = hits.iter().map(|hit| hit.ts);
+                let mut fact_stamps = facts.iter().map(|answer| answer.latest.ts);
+                while anchors.len() < READING_ANCHORS {
+                    let mut advanced = false;
+                    if let Some(ts) = hit_stamps.next() {
+                        advanced = true;
+                        if stamps.insert(ts) {
+                            anchors.push(ts);
+                        }
+                    }
+                    if anchors.len() < READING_ANCHORS
+                        && let Some(ts) = fact_stamps.next()
+                    {
+                        advanced = true;
+                        if stamps.insert(ts) {
+                            anchors.push(ts);
+                        }
+                    }
+                    if !advanced {
+                        break;
+                    }
+                }
+                let mut rows = Vec::new();
+                let mut card_ids = HashSet::new();
+                let mut readings_truncated = false;
+                for at in anchors {
+                    let (nearby, nearby_truncated) = db
+                        .readings_near(
+                            at,
+                            sister_core::grounded_answer::READING_SLACK_MS,
+                            READINGS_PER_ANCHOR,
+                        )
+                        .map_err(|e| format!("{e:#}"))?;
+                    readings_truncated |= nearby_truncated;
+                    for row in nearby {
+                        if card_ids.insert(row.id) {
+                            rows.push(row);
+                        }
+                    }
+                }
+                rows.sort_by_key(|row| (row.segment_core_start, row.id));
+                readings_truncated |= rows.len() > sister_core::grounded_answer::MAX_READINGS;
+                rows.truncate(sister_core::grounded_answer::MAX_READINGS);
+                (rows, readings_truncated)
+            }
         };
-        let prepared = sister_core::grounded_answer::prepare(
-            &question,
-            &readings,
-            &facts,
-            &hits,
-            sister_core::now_ms(),
-        )
-        .map_err(|e| format!("{e:#}"))?;
+        let readings = reading_rows
+            .iter()
+            .map(sister_core::grounded_answer::Reading::from_card)
+            .collect::<Vec<_>>();
+        let mut prepared =
+            sister_core::grounded_answer::prepare(&question, &readings, &facts, &hits, now)
+                .map_err(|e| format!("{e:#}"))?;
+        if readings_truncated && let Some(prepared) = &mut prepared {
+            prepared.truncated = true;
+        }
         // **他打的那句話不進記錄檔。** 只留形狀、幾筆、幾毫秒——這三個數字
         // 足以回答「她是不是又卡住了」，而問題本身是他的東西，不是我的。
         tracing::info!(

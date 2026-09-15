@@ -161,11 +161,14 @@ binary 跑過，並證明既有資料與 migration 都不丟。自動 updater �
 ### S1 CLI-directed 本機記憶問答合約（alpha.126 起）
 
 - 第二張同意有效且大腦已接好時，每個文字問題先交給那支 CLI。CLI 只能要求 1–3 條
-  自然語言記憶查詢；AI-Sister 在 SQLite 本機執行、去重，再選最多 12 筆來源交回同一支
-  CLI 成句。CLI 不取得 DB path、SQL、整份資料庫或畫面 bytes。
-- 問題副本最多 2 KiB，nonce 圍欄內資料合計最多 12 KiB；這一層不建 embedding、向量庫、
+  自然語言記憶查詢；AI-Sister 在 SQLite 本機執行，跨查詢輪流取證、去重，再選最多 18 筆
+  來源交回同一支 CLI 成句。原問題的時間範圍不會被改寫查詢蓋掉；時間範圍內的 L2 會取
+  開頭、中段與結尾，一般問題則取命中時間附近的 L2，再依時間排序供大腦串起前後文。
+  CLI 不取得 DB path、SQL、整份資料庫或畫面 bytes。
+- 問題副本最多 2 KiB，nonce 圍欄內資料合計最多 24 KiB；這一層不建 embedding、向量庫、
   prompt cache 或另一份永久記憶。零命中時 CLI 仍已處理並規劃這題，但不生成無來源答案。
-- 只接受 1–3 句 strict JSON；每句最多 240 字，而且每句至少引用一個這輪真的提供的
+- 只接受 1–6 句 strict JSON；簡單事實維持短答，需要交代前因後果時才展開；每句最多
+  320 字，而且每句至少引用一個這輪真的提供的
   `fact:<id>`／`chunk:<id>`。native 與 renderer 都把 ref 對回同一份本機結果；任一不一致就
   捨棄整份成句，原 facts／原文列表仍完整呈現。
 - 每個非空新問題都會取消舊回答；Unix process group／Windows Job tree
@@ -498,7 +501,9 @@ Wayland 才留到 P8／社群成熟化；Preview 的隱私與資料語意不因�
   worker pool（預設 4）。〔alpha.61 才真的**自己**醒：在那之前 `brain::run` /
   `reviewer::run` 只有使用者親手打指令才跑，`record` 迴圈裡一次都沒叫過，
   所以錄一整天打開記憶瀏覽器是空的。現在錄製時起一條慢路徑執行緒，
-  熱路徑只做一次 `AtomicBool` 寫入〕
+  熱路徑只做一次 `AtomicBool` 寫入。alpha.142 起，背景從最早的未理解段一張一張往後做；
+  前一張落地後才重讀 DB 做下一張，每次用新證據支持、推翻或修正目前工作假設；
+  有 backlog 就立即繼續，失敗段也不會堵住後面。它仍然只寫記憶、不主動開口〕
 - Reviewer（SPEC §6）：15–30min 批次 + 日終盤點、typed card merge、
   五類強制回查、雙 pass 分歧警報、回查率 log。
 - L3：commitments/entities/day_summaries + provenance cascade delete。

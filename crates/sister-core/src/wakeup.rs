@@ -447,6 +447,12 @@ struct Engine {
     last_day: String,
     last_review_at: Option<Millis>,
     last_look_at: Option<Millis>,
+    /// 這場已經試過的最後一段。一段壞 JSON／timeout 或 CLI 失敗不能讓
+    /// worker 每 50ms 只重試它、直到吃完整天預算，後面的新證據卻永遠沒被想過。
+    interpret_cursor: Option<Millis>,
+    /// 還有可能沒想過的已關閉段落。背景下一拍立刻再看，但每次只讓一段完成並
+    /// 落地，下一段才能把它當真正存在的上一張工作假設。
+    interpret_again_soon: bool,
     recorded_no_consent: bool,
     budget_exhausted: bool,
     report: Report,
@@ -467,6 +473,8 @@ impl Engine {
             last_day,
             last_review_at: None,
             last_look_at: None,
+            interpret_cursor: None,
+            interpret_again_soon: false,
             recorded_no_consent: false,
             budget_exhausted: false,
         })
@@ -482,6 +490,9 @@ impl Engine {
     fn next_wait(&self, now: Millis) -> u64 {
         if !armed(&self.brain) {
             return TIME_CAP_MS as u64;
+        }
+        if self.interpret_again_soon {
+            return SLEEP_SLICE.as_millis() as u64;
         }
         next_wait_ms(now, self.last_review_at, self.last_look_at)
     }
@@ -565,6 +576,7 @@ impl Engine {
 
     fn maybe_interpret(&mut self, now: Millis, include_open: bool) -> Result<()> {
         self.last_look_at = Some(now);
+        self.interpret_again_soon = false;
         let consent = crate::consent::load(&self.data_dir);
         if consent.cloud_permit().is_none() {
             if !self.recorded_no_consent {
@@ -600,14 +612,27 @@ impl Engine {
             return Ok(());
         }
 
+        let only_core_start = if include_open {
+            segs.last().map(|segment| segment.core_started_at)
+        } else {
+            None
+        };
+        let after_core_start = if include_open {
+            None
+        } else {
+            self.interpret_cursor
+        };
         let mut input = InterpretInput {
             db: &mut self.db,
             consent: &consent,
             brain: &self.brain,
             from_ts: from,
             to_ts: to,
-            limit: self.brain.concurrency_slots() as usize,
-            only_core_start: None,
+            // 一次只完成一段：下一段重新讀 DB，才能看到剛落地的工作假設。
+            // 手動 `sister interpret` 仍可用設定的 worker pool 並行補資料。
+            limit: 1,
+            after_core_start,
+            only_core_start,
         };
         let dry = brain::prepare(&mut input, &self.data_dir)?;
         match &dry.skip {
@@ -645,6 +670,7 @@ impl Engine {
                     }
                     return Ok(());
                 }
+                let attempted_core = dry.jobs[0].core_started_at;
                 self.report.interpreter_wakes += 1;
                 let result = brain::run(&mut input, &self.data_dir)?;
                 self.report.interpreter_jobs += result.ran.len() as u32;
@@ -655,6 +681,12 @@ impl Engine {
                     .iter()
                     .filter(|j| j.previous.is_some() && !j.outcome.wrote_card())
                     .count() as u32;
+                if !include_open && !result.ran.is_empty() {
+                    self.interpret_cursor = Some(attempted_core);
+                }
+                // 有跑到一段就很可能還有 backlog；下一拍立刻重查。若其實沒有，
+                // 下一次 collect_jobs 會回空並把這個旗標留在 false。
+                self.interpret_again_soon = !include_open && !result.ran.is_empty();
                 if include_open {
                     self.report.last_segment = if result
                         .ran
@@ -862,6 +894,44 @@ mod tests {
                  time.sleep({sleep_secs})\n\
                  sys.stdout.buffer.write({json:?}.encode('utf-8'))\n"
             ),
+        )
+        .expect("script");
+        (
+            "python3".into(),
+            vec![
+                script.to_string_lossy().into_owned(),
+                sentinel.to_string_lossy().into_owned(),
+            ],
+        )
+    }
+
+    fn chaining_fake_cli(dir: &Path, sentinel: &Path) -> (String, Vec<String>) {
+        let script = dir.join("fake-chaining-brain.py");
+        std::fs::write(
+            &script,
+            r#"import json, pathlib, re, sys
+data = sys.stdin.buffer.read()
+segments = re.findall(rb'segment:(\d+)', data)
+frames = re.findall(rb'frame:(\d+)', data)
+current = segments[-1].decode('ascii')
+saw_first = b'CHAIN_FIRST' in data
+activity = 'CHAIN_SECOND_SAW_FIRST' if saw_first else 'CHAIN_FIRST'
+continues = None
+if saw_first:
+    continues = {'segment_ref': 'segment:' + segments[-2].decode('ascii'), 'confidence': 0.9}
+card = {
+    'segment_ref': 'segment:' + current,
+    'activity': activity,
+    'entities': [],
+    'continues': continues,
+    'commitment_candidates': [],
+    'confidence': 0.8,
+    'evidence_refs': ['frame:' + frames[-1].decode('ascii')],
+    'open_questions': []
+}
+pathlib.Path(sys.argv[1]).write_text('started')
+sys.stdout.buffer.write(json.dumps(card).encode('utf-8'))
+"#,
         )
         .expect("script");
         (
@@ -1184,6 +1254,70 @@ mod tests {
     }
 
     #[test]
+    fn background_interpreter_builds_one_fresh_working_hypothesis_at_a_time() {
+        let tmp = Tmp::new("wake-chain");
+        grant_cloud(&tmp.0);
+        let mut db = Db::open(&Config::db_path(&tmp.0)).expect("db");
+        let ts = 1_700_000_425_000;
+        seed_worth(&mut db, ts);
+        let segs = db.chapters_for_range(ts, ts + 400_000).expect("segs");
+        assert!(segs.len() >= 2, "要有前後兩段：{segs:?}");
+        let first = segs[0].core_started_at;
+        let second = segs[1].core_started_at;
+        let sentinel = tmp.0.join("chain-started");
+        let (command, args) = chaining_fake_cli(&tmp.0, &sentinel);
+        let brain = BrainConfig {
+            command,
+            args,
+            ..Default::default()
+        };
+        let mut engine = Engine::new(db, tmp.0.clone(), brain, ts).expect("engine");
+
+        engine.step(ts + 201_000, Step::Activity).expect("第一段");
+        let first_card = engine
+            .db
+            .latest_l2_for_segment(first)
+            .expect("first read")
+            .expect("first card");
+        assert_eq!(first_card.activity, "CHAIN_FIRST");
+        assert_eq!(
+            engine.interpret_cursor,
+            Some(first),
+            "這場要越過已試過的段，失敗時才不會永遠卡在同一段"
+        );
+        assert!(
+            engine.interpret_again_soon,
+            "跑過一段後要立刻重查 backlog，不能再睡十分鐘"
+        );
+        assert_eq!(
+            engine.next_wait(ts + 201_000),
+            SLEEP_SLICE.as_millis() as u64
+        );
+
+        engine.step(ts + 201_000, Step::Shutdown).expect("第二段");
+        let second_card = engine
+            .db
+            .latest_l2_for_segment(second)
+            .expect("second read")
+            .expect("second card");
+        assert_eq!(
+            second_card.activity, "CHAIN_SECOND_SAW_FIRST",
+            "後一段必須實際讀到前一段剛寫的假說"
+        );
+        let continues: crate::brain::Continues = serde_json::from_str(
+            second_card
+                .continues_json
+                .as_deref()
+                .expect("第二段要接回第一段"),
+        )
+        .expect("continues");
+        assert_eq!(continues.segment_ref, format!("segment:{first}"));
+        assert_eq!(engine.report.interpreter_jobs, 2);
+        assert_eq!(engine.report.interpreter_cards, 2);
+        assert!(sentinel.exists());
+    }
+
+    #[test]
     fn wakeup_does_not_count_a_first_attempt_that_fails() {
         let tmp = Tmp::new("wake-retry-fail");
         grant_cloud(&tmp.0);
@@ -1221,9 +1355,15 @@ mod tests {
         };
         let mut engine = Engine::new(db, tmp.0.clone(), brain, ts).expect("engine");
         engine
+            .step(ts + 201_000, Step::Activity)
+            .expect("先把已關閉的第一段想完");
+        engine
             .step(ts + 201_000, Step::Shutdown)
-            .expect("mixed retry step");
-        assert_eq!(engine.report.interpreter_jobs, 2, "測試必須真的跑兩種 job");
+            .expect("再把最後一段想完");
+        assert_eq!(
+            engine.report.interpreter_jobs, 2,
+            "兩段必須前後各跑一次，不能在同一批平行起跑"
+        );
         assert_eq!(engine.report.interpreter_cards, 1, "其中一個重問這次要成功");
         assert_eq!(
             engine.report.interpreter_retried_without_card, 0,
@@ -1272,9 +1412,15 @@ mod tests {
         };
         let mut engine = Engine::new(db, tmp.0.clone(), brain, ts).expect("engine");
         engine
+            .step(ts + 201_000, Step::Activity)
+            .expect("先把已關閉的第一段想完");
+        engine
             .step(ts + 201_000, Step::Shutdown)
-            .expect("mixed retry step");
-        assert_eq!(engine.report.interpreter_jobs, 2, "測試必須真的跑兩種 job");
+            .expect("再把最後一段想完");
+        assert_eq!(
+            engine.report.interpreter_jobs, 2,
+            "兩段必須前後各跑一次，不能在同一批平行起跑"
+        );
         assert_eq!(engine.report.interpreter_cards, 1, "其中一個重問這次要成功");
         assert_eq!(
             engine.report.interpreter_retried_without_card, 1,

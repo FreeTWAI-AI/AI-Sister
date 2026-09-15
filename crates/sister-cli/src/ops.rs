@@ -1892,6 +1892,7 @@ pub mod interpret {
             from_ts: from,
             to_ts: to,
             limit,
+            after_core_start: None,
             only_core_start,
         };
 

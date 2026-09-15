@@ -393,14 +393,21 @@ DB path、SQL、整份資料庫或畫面。外送紀錄在
 送出去的是原文），假設卡片在 `l2_card`（append-only 版本鏈，`author` 是 interpreter／reviewer／user，刪 L0 時 tombstone 而不是實刪——列留著，
 卡片上的字清掉）。桌面時間軸的「外送」頁讀這兩張表和 `meta.ever_brain_outbound`。
 
+alpha.142 的背景理解排程只多兩個行程內狀態：這場已試過的最後一個 segment 起點，以及是否應在 50ms 後
+繼續下一段。兩者都只在 `sister-brain` thread RAM，不加 schema、不進 export，錄製收工就消失。真正完成的工作假設仍只寫既有
+`l2_card`，失敗仍只寫既有 `brain_outbound`；當前 segment 的 frame／fact 與上一張 activity 在 bounded CLI prompt 裡存活，不另存 prompt cache。
+
 alpha.126 的 S1 agent retrieval 不增加 schema 或永久資料。每一題先把問題交給當下選定的
-CLI，AI-Sister 再依其最多三條查詢從同一顆 SQLite 的 L1 facts 與 FTS hits 選最多 12 筆；
-當前問題、選中來源正文與時間／app／title／URL metadata 只在 desktop RAM 和 CLI stdin
+CLI，AI-Sister 再依其最多三條查詢從同一顆 SQLite 的 L1 facts、FTS hits 與鄰近 L2 選最多
+18 筆；多條查詢輪流取證、跨查詢去重，原問題的時間範圍仍獨立用來挑開頭、中段與結尾的
+L2。當前問題、選中來源正文與時間／app／title／URL metadata 只在 desktop RAM 和 CLI stdin
 的 bounded prompt 裡存在。問題副本最多 2 KiB，圍欄內資料最多
-12 KiB，單筆來源正文最多 4 KiB；CLI 結束後不另存 prompt、回覆 cache、embedding 或向量
+24 KiB，單筆來源正文最多 4 KiB；CLI 結束後不另存 prompt、回覆 cache、embedding 或向量
 索引。Claude／Codex／Gemini 從 stdin 讀 prompt；Grok bridge 使用目前使用者限定讀取、
 handle 關閉即刪的 private prompt file，四者都在一次性空 private working directory 執行。
-有效的 1–3 句回答只在當次 Tauri reply／renderer DOM 存活；永久留下的仍只有原本的 query
+鄰近 L2 在答題 prompt 只有判讀文字、時間與 `kind=reading`；它在 DB 裡的 segment、confidence、author、
+continues 與 open questions 不進答題 CLI。
+有效的 1–6 句回答只在當次 Tauri reply／renderer DOM 存活；永久留下的仍只有原本的 query
 log（若 `privacy.query_log` 開啟）與不含原文的 `brain_outbound role=answer_search`／`answer`
 稽核列。`queries.latency_ms` 量本機 retrieval 與本題本機工作；CLI 查詢規劃與成句耗時各在
 自己的 outbound `duration_ms`。已取得 CLI 設定與第二張同意、進入 spawn supervision 的

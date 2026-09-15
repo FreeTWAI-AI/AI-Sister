@@ -1209,6 +1209,7 @@ fn run_brain_for_eval(
             from_ts,
             to_ts,
             limit: 80,
+            after_core_start: None,
             only_core_start: None,
         };
         brain::run(&mut input, control_data_dir)?

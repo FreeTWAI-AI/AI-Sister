@@ -4080,6 +4080,110 @@ impl Db {
             .map_err(Into::into)
     }
 
+    /// 一段時間的理解記憶，從頭到尾等距取樣。
+    ///
+    /// `readings_covering` 是「在附近找最新幾張」，適合一個關鍵字命中周圍；「昨天
+    /// 做了什麼」則需要一天的開頭、轉折與結尾。只拿最後八張會把整個上午安靜抹掉。
+    /// 這支先數每段最新的活卡，再只讀最多 `limit` 個等距 offset；不把一年份卡片
+    /// 全載進記憶體後才截斷。
+    ///
+    /// 回傳第二格明說範圍內是否還有沒選進來的卡，不能讓八張看起來像全部。
+    pub fn readings_spanning(
+        &self,
+        from: Millis,
+        to: Millis,
+        limit: usize,
+    ) -> Result<(Vec<L2CardRow>, bool)> {
+        if limit == 0 || to <= from {
+            return Ok((Vec::new(), false));
+        }
+        let latest = "card.tombstoned_at IS NULL
+             AND card.segment_core_start >= ?1
+             AND card.segment_core_start < ?2
+             AND NOT EXISTS (
+                 SELECT 1
+                 FROM l2_card AS newer
+                 WHERE newer.segment_core_start = card.segment_core_start
+                   AND newer.tombstoned_at IS NULL
+                   AND (newer.version > card.version
+                        OR (newer.version = card.version AND newer.id > card.id))
+             )";
+        let total: i64 = self.conn.query_row(
+            &format!("SELECT COUNT(*) FROM l2_card AS card WHERE {latest}"),
+            params![from, to],
+            |row| row.get(0),
+        )?;
+        if total == 0 {
+            return Ok((Vec::new(), false));
+        }
+
+        let take = (limit as i64).min(total);
+        let mut offsets = Vec::with_capacity(take as usize);
+        for index in 0..take {
+            let offset = if take == 1 {
+                total - 1
+            } else {
+                index * (total - 1) / (take - 1)
+            };
+            if offsets.last().copied() != Some(offset) {
+                offsets.push(offset);
+            }
+        }
+        let mut stmt = self.conn.prepare(&format!(
+            "{L2_SELECT}
+             FROM l2_card AS card
+             WHERE {latest}
+             ORDER BY card.segment_core_start ASC, card.version DESC, card.id DESC
+             LIMIT 1 OFFSET ?3"
+        ))?;
+        let mut rows = Vec::with_capacity(offsets.len());
+        for offset in offsets {
+            rows.push(stmt.query_row(params![from, to, offset], map_l2_row)?);
+        }
+        Ok((rows, total > limit as i64))
+    }
+
+    /// 最靠近一筆檢索命中的理解記憶。關鍵字可能同時命中上週與今天；每個命中
+    /// 各自在自己的半小時附近找，才不會把兩端之間幾天的無關卡片塞進答案。
+    pub fn readings_near(
+        &self,
+        at: Millis,
+        slack: Millis,
+        limit: usize,
+    ) -> Result<(Vec<L2CardRow>, bool)> {
+        if limit == 0 || slack < 0 {
+            return Ok((Vec::new(), false));
+        }
+        let from = at.saturating_sub(slack);
+        let to = at.saturating_add(slack).saturating_add(1);
+        let mut stmt = self.conn.prepare(&format!(
+            "{L2_SELECT}
+             FROM l2_card AS card
+             WHERE card.tombstoned_at IS NULL
+               AND card.segment_core_start >= ?1
+               AND card.segment_core_start < ?2
+               AND NOT EXISTS (
+                   SELECT 1
+                   FROM l2_card AS newer
+                   WHERE newer.segment_core_start = card.segment_core_start
+                     AND newer.tombstoned_at IS NULL
+                     AND (newer.version > card.version
+                          OR (newer.version = card.version AND newer.id > card.id))
+               )
+             ORDER BY
+               CASE WHEN card.segment_core_start >= ?3
+                    THEN card.segment_core_start - ?3
+                    ELSE ?3 - card.segment_core_start END ASC,
+               card.segment_core_start ASC, card.id ASC
+             LIMIT ?4"
+        ))?;
+        let rows = stmt.query_map(params![from, to, at, limit as i64 + 1], map_l2_row)?;
+        let mut rows = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+        let truncated = rows.len() > limit;
+        rows.truncate(limit);
+        Ok((rows, truncated))
+    }
+
     pub fn latest_l2_before(&self, core_started_at: Millis) -> Result<Option<L2CardRow>> {
         self.conn
             .query_row(
@@ -8194,6 +8298,42 @@ mod tests {
             "撈滿就停，而且留下的是最新那一段"
         );
         assert!(db.readings_covering(400, 700, 0).expect("zero").is_empty());
+    }
+
+    #[test]
+    fn readings_spanning_keeps_the_beginning_middle_and_end() {
+        let mut db = test_db();
+        let ids = (1..=9)
+            .map(|n| insert_test_l2(&mut db, n * 100, &format!("第 {n} 段")))
+            .collect::<Vec<_>>();
+        let (rows, truncated) = db.readings_spanning(50, 950, 3).expect("spanning");
+        assert_eq!(
+            rows.iter().map(|row| row.id).collect::<Vec<_>>(),
+            [ids[0], ids[4], ids[8]],
+            "不是拿最後三張；要橫跨整個時間範圍"
+        );
+        assert!(truncated, "九張取三張必須明說還有沒送進回答的內容");
+
+        let (all, all_truncated) = db.readings_spanning(50, 950, 20).expect("all");
+        assert_eq!(all.len(), 9);
+        assert!(!all_truncated);
+    }
+
+    #[test]
+    fn readings_near_choose_actual_neighbors_not_the_latest_in_a_wide_window() {
+        let mut db = test_db();
+        insert_test_l2(&mut db, 100, "很早");
+        let before = insert_test_l2(&mut db, 490, "前面");
+        let after = insert_test_l2(&mut db, 510, "後面");
+        insert_test_l2(&mut db, 900, "很晚");
+
+        let (rows, truncated) = db.readings_near(500, 500, 2).expect("near");
+        assert_eq!(
+            rows.iter().map(|row| row.id).collect::<Vec<_>>(),
+            [before, after],
+            "同距離時按時間排，且遠端不能因為比較新就擠進來"
+        );
+        assert!(truncated, "四張只取兩張時不能把截斷冒充成完整");
     }
 
     /// 墓碑掉的那一張不算，往前補的那一張也一樣不算。

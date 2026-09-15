@@ -1053,7 +1053,8 @@ body.has-consent-guide .answer-bubble {
  *
  * 刻意不繼承 `.hit` 的卡片樣子（底色、左邊那條線）——框外面已經是一顆對白
  * 泡泡了，裡面再切成一張一張卡片會把「她在說話」讀成「這是搜尋結果」。
- * 多句之間用一條淡到幾乎看不見的線分開就夠，而第一句上面不要有線。
+ * 多句是同一段回答，不加分隔線把它們切成搜尋結果；每句自己的出處仍在 hover／
+ * focus 時就地展開。
  */
 .grounded-answer {
   background: none;
@@ -1063,8 +1064,7 @@ body.has-consent-guide .answer-bubble {
 }
 
 .grounded-answer + .grounded-answer {
-  border-top: 1px solid rgb(46 33 64 / 10%);
-  padding-top: 8px;
+  margin-top: 4px;
 }
 
 .grounded-text {

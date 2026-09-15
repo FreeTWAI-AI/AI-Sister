@@ -1151,6 +1151,9 @@ pub struct DryRun {
 #[derive(Debug, Clone)]
 pub struct PreparedJob {
     pub segment_ref: String,
+    /// 這一段開始前，資料庫裡最新一張工作假設。背景解釋層只能把
+    /// `continues.segment_ref` 指回這一張；不能憑字串接到任意舊段。
+    pub previous_segment_ref: Option<String>,
     pub core_started_at: Millis,
     pub core_ended_at: Millis,
     pub app: Option<String>,
@@ -1187,6 +1190,9 @@ pub struct InterpretInput<'a> {
     pub from_ts: Millis,
     pub to_ts: Millis,
     pub limit: usize,
+    /// 只看這個 core 開始之後的段落。背景 worker 用它越過這場已經試過、
+    /// 但沒寫成卡片的段落，避免一個壞回覆把後面的理解全部堵住。
+    pub after_core_start: Option<Millis>,
     /// 指定某一段的 core_started_at。有的話跳過「值不值得」那一關。
     pub only_core_start: Option<Millis>,
 }
@@ -1448,6 +1454,19 @@ fn classify(
     }
     match parse_card(&spawn.stdout, &job.segment_ref) {
         Ok(mut card) => {
+            if let Some(continues) = &card.continues
+                && job.previous_segment_ref.as_deref() != Some(continues.segment_ref.as_str())
+            {
+                return Ok((
+                    OutboundOutcome::BadJson,
+                    None,
+                    Some(format!(
+                        "continues.segment_ref 只能指向這一段實際拿到的上一張假設（模型說 {}，實際是 {}）",
+                        continues.segment_ref,
+                        job.previous_segment_ref.as_deref().unwrap_or("沒有上一張")
+                    )),
+                ));
+            }
             card.evidence_refs.retain(|r| match r {
                 EvidenceRef::Frame(id) => db.frame_exists(*id).unwrap_or(false),
                 EvidenceRef::Fact(id) => db.fact_exists(*id).unwrap_or(false),
@@ -1484,7 +1503,15 @@ fn collect_jobs(input: &mut InterpretInput<'_>) -> Result<Vec<PreparedJob>> {
         .max(1)
         .min(input.brain.concurrency_slots() as usize * 4);
 
-    for seg in segs.into_iter().rev() {
+    // 從最早還沒想過的那一段開始。背景會一張一張處理；如果從最新的倒著做，
+    // 後一張永遠看不到前一張剛形成的理解，`continues` 只剩猜字串。
+    for seg in segs {
+        if input
+            .after_core_start
+            .is_some_and(|after| seg.core_started_at <= after)
+        {
+            continue;
+        }
         if input
             .only_core_start
             .is_some_and(|only| seg.core_started_at != only)
@@ -1525,6 +1552,7 @@ fn collect_jobs(input: &mut InterpretInput<'_>) -> Result<Vec<PreparedJob>> {
             crate::prompt_fence::fence_untrusted_data(&evidence, MAX_PROMPT_BYTES)?;
         jobs.push(PreparedJob {
             segment_ref: segment_ref(seg.core_started_at),
+            previous_segment_ref: prev.as_ref().map(|card| card.segment_ref.clone()),
             core_started_at: seg.core_started_at,
             core_ended_at: seg.core_ended_at,
             app: seg.app.clone(),
@@ -1536,7 +1564,6 @@ fn collect_jobs(input: &mut InterpretInput<'_>) -> Result<Vec<PreparedJob>> {
             break;
         }
     }
-    jobs.reverse();
     Ok(jobs)
 }
 
@@ -1550,7 +1577,11 @@ fn build_prompt(
     header.push_str(
         "你是一個本機記憶的解釋層。根據下面這段證據，產出一張 JSON 卡片。\n\
          這是假設，不是事實。不確定就降低 confidence，把問題放進 open_questions。\n\
-         禁止把猜測寫成確定的事。只輸出一個 JSON 物件，不要 markdown、不要前後解說。\n\n",
+         你維護的是一套會隨新證據修正的工作理解，不是每個畫面各寫一句摘要。\n\
+         先用本段證據檢查上一張假設：它支持、推翻，還是補上了結果。\n\
+         如果是同一件事，activity 要說清楚整體目標與本段在其中做了什麼，continues 只能指向下面那張上一段；\n\
+         沒有關聯就填 null。新 activity 必須是到目前為止自洽的工作假說：新證據支持就補強，矛盾就改寫，不能為了串得好看而忽略反證。\n\
+         禁止把先後順序冒充因果，也禁止把猜測寫成確定的事。只輸出一個 JSON 物件，不要 markdown、不要前後解說。\n\n",
     );
     header.push_str("契約：\n");
     header.push_str(
@@ -1569,10 +1600,8 @@ fn build_prompt(
     header.push_str("\nevidence_refs 只能引用下面列出的 frame: 與 fact:。\n");
     match prev {
         Some(p) => {
-            header.push_str(
-                "可推翻的他人假設（僅一筆，不是事實，可以忽略或推翻）：\n- segment_ref: segment:",
-            );
-            header.push_str(&p.segment_core_start.to_string());
+            header.push_str("目前的工作假設（僅一筆、可推翻，不是事實）：\n- segment_ref: ");
+            header.push_str(&p.segment_ref);
             header.push_str("\n  confidence（模型自己說的）: ");
             header.push_str(&p.model_confidence.to_string());
             header.push_str("\n\n");
@@ -1602,7 +1631,7 @@ fn build_prompt(
 
     let mut evidence = String::new();
     if let Some(p) = prev {
-        evidence.push_str(&format!("上一張假設 activity：{}\n", p.activity));
+        evidence.push_str(&format!("上一張工作假設 activity：{}\n", p.activity));
     }
     if let Some(app) = &seg.app {
         evidence.push_str(&format!("app：{app}\n"));
@@ -2037,17 +2066,30 @@ mod tests {
             supersedes: None,
             activity: prev_activity.into(),
             entities_json: "[]".into(),
-            continues_json: None,
+            continues_json: Some(
+                r#"{"segment_ref":"INTERNAL_CONTINUES_MARK","confidence":0.5}"#.into(),
+            ),
             commitments_json: "[]".into(),
             model_confidence: 0.5,
             evidence_json: "[]".into(),
-            open_questions_json: "[]".into(),
+            open_questions_json: r#"["INTERNAL_OPEN_MARK"]"#.into(),
             created_at: 500,
             author: crate::db::L2Author::Interpreter,
             tombstoned_at: None,
         };
 
         let (header, evidence) = build_prompt(&seg, &[], &ocr, Some(&prev));
+        for instruction in [
+            "會隨新證據修正的工作理解",
+            "支持、推翻",
+            "整體目標與本段",
+            "不能為了串得好看而忽略反證",
+        ] {
+            assert!(
+                header.contains(instruction),
+                "持續工作假設的規則不能被拿掉：{instruction}"
+            );
+        }
         let (fenced, _) =
             crate::prompt_fence::fence_untrusted_data(&evidence, MAX_PROMPT_BYTES).unwrap();
         let end = fenced
@@ -2069,6 +2111,12 @@ mod tests {
                 .find(mark)
                 .unwrap_or_else(|| panic!("圍欄裡找不到原文，被吃掉或改寫了：{mark:?}"));
             assert!(at > begin, "原文出現在開始圍欄之前：{mark:?}");
+        }
+        for internal in ["INTERNAL_CONTINUES_MARK", "INTERNAL_OPEN_MARK"] {
+            assert!(
+                !header.contains(internal) && !evidence.contains(internal),
+                "現行同意書沒有授權把 L2 內部關係欄位再送出去：{internal}"
+            );
         }
     }
 
@@ -2524,6 +2572,7 @@ mod tests {
                 from_ts: ts,
                 to_ts: ts + 400_000,
                 limit: 1,
+                after_core_start: None,
                 only_core_start: Some(core),
             },
             &dir,
@@ -2876,12 +2925,187 @@ mod tests {
             from_ts: ts,
             to_ts: ts + 540_000,
             limit: 4,
+            after_core_start: None,
             only_core_start: Some(left),
         })
         .expect("collect jobs");
         assert!(
             jobs.is_empty(),
             "右半已經有活卡的合併章節，不可以再花一次解釋預算"
+        );
+    }
+
+    #[test]
+    fn collect_jobs_finishes_the_oldest_gap_then_reads_it_as_the_next_working_hypothesis() {
+        use crate::model::{FocusEvent, FocusKind, FocusSnapshot, FrameCapture, OcrBlock};
+
+        let mut db = Db::open_in_memory().expect("db");
+        let ts = 1_700_000_060_000;
+        let sid = db.start_session("test", "0").expect("session");
+        for (offset, app) in [
+            (0, "code.exe"),
+            (180_000, "chrome.exe"),
+            (360_000, "notion.exe"),
+        ] {
+            db.insert_focus(
+                sid,
+                &FocusEvent {
+                    ts: ts + offset,
+                    kind: FocusKind::Focus,
+                    snapshot: FocusSnapshot {
+                        app_id: Some(app.into()),
+                        ..Default::default()
+                    },
+                },
+            )
+            .expect("focus");
+        }
+        for (offset, dhash, app, error) in [
+            (30_000, 1, "code.exe", "error[E0308]: mismatched types"),
+            (210_000, 2, "chrome.exe", "error[E0425]: cannot find value"),
+        ] {
+            db.insert_frame(
+                sid,
+                &FrameCapture {
+                    ts: ts + offset,
+                    monitor: 0,
+                    width: 100,
+                    height: 100,
+                    dhash,
+                    image: None,
+                    image_ext: "png",
+                    ocr: vec![OcrBlock {
+                        text: error.into(),
+                        x: 0,
+                        y: 0,
+                        w: 10,
+                        h: 10,
+                        confidence: 1.0,
+                    }],
+                    focus: FocusSnapshot {
+                        app_id: Some(app.into()),
+                        ..Default::default()
+                    },
+                },
+                None,
+                0,
+            )
+            .expect("frame");
+        }
+        let chapters = db.chapters_for_range(ts, ts + 540_000).expect("chapters");
+        assert!(chapters.len() >= 2, "夾具要有兩段：{chapters:?}");
+        let first = chapters[0].core_started_at;
+        let second = chapters[1].core_started_at;
+        let consent = Consent::default();
+        let brain = crate::config::BrainConfig::default();
+
+        let first_job = collect_jobs(&mut InterpretInput {
+            db: &mut db,
+            consent: &consent,
+            brain: &brain,
+            from_ts: ts,
+            to_ts: ts + 540_000,
+            limit: 1,
+            after_core_start: None,
+            only_core_start: None,
+        })
+        .expect("first job");
+        assert_eq!(first_job.len(), 1);
+        assert_eq!(
+            first_job[0].core_started_at, first,
+            "不能從最新的 backlog 倒著想"
+        );
+        assert_eq!(first_job[0].previous_segment_ref, None);
+
+        let after_failed_first = collect_jobs(&mut InterpretInput {
+            db: &mut db,
+            consent: &consent,
+            brain: &brain,
+            from_ts: ts,
+            to_ts: ts + 540_000,
+            limit: 1,
+            after_core_start: Some(first),
+            only_core_start: None,
+        })
+        .expect("job after failed first");
+        assert_eq!(after_failed_first.len(), 1);
+        assert_eq!(
+            after_failed_first[0].core_started_at, second,
+            "這場已試過卻失敗的一段不能堵住後面新證據"
+        );
+
+        let first_ref = segment_ref(first);
+        db.insert_l2_card(&crate::db::L2Insert {
+            segment_core_start: first,
+            segment_ref: &first_ref,
+            activity: "WORKING_HYPOTHESIS_MARK",
+            entities_json: "[]".into(),
+            continues_json: None,
+            commitments_json: "[]".into(),
+            model_confidence: 0.7,
+            evidence_json: "[]".into(),
+            open_questions_json: "[]".into(),
+            author: crate::db::L2Author::Interpreter,
+        })
+        .expect("first card");
+
+        let second_job = collect_jobs(&mut InterpretInput {
+            db: &mut db,
+            consent: &consent,
+            brain: &brain,
+            from_ts: ts,
+            to_ts: ts + 540_000,
+            limit: 1,
+            after_core_start: None,
+            only_core_start: None,
+        })
+        .expect("second job");
+        assert_eq!(second_job.len(), 1);
+        assert_eq!(second_job[0].core_started_at, second);
+        assert_eq!(
+            second_job[0].previous_segment_ref.as_deref(),
+            Some(first_ref.as_str())
+        );
+        assert!(
+            second_job[0].payload.contains("WORKING_HYPOTHESIS_MARK"),
+            "後一段必須讀到前一段剛落地的工作假說"
+        );
+    }
+
+    #[test]
+    fn classify_rejects_a_continuation_to_any_card_except_the_one_actually_shown() {
+        let mut db = Db::open_in_memory().expect("db");
+        let fid = seed(&mut db, 1_700_000_070_000);
+        let job = PreparedJob {
+            segment_ref: "segment:200".into(),
+            previous_segment_ref: Some("segment:100".into()),
+            core_started_at: 200,
+            core_ended_at: 300,
+            app: None,
+            title: None,
+            payload: String::new(),
+            truncated: false,
+        };
+        let spawn = SpawnOutcome {
+            payload_chars_written: 1,
+            duration_ms: 1,
+            stdout: format!(
+                r#"{{"segment_ref":"segment:200","activity":"x","entities":[],"continues":{{"segment_ref":"segment:999","confidence":0.8}},"commitment_candidates":[],"confidence":0.7,"evidence_refs":["frame:{fid}"],"open_questions":[]}}"#
+            ),
+            stderr: String::new(),
+            timed_out: false,
+            spawn_error: None,
+            exit_code: Some(0),
+            process_start: ProcessStart::Started,
+        };
+        let (outcome, card, error) = classify(&job, &spawn, &db).expect("classify");
+        assert_eq!(outcome, OutboundOutcome::BadJson);
+        assert!(card.is_none());
+        assert!(
+            error
+                .as_deref()
+                .is_some_and(|text| text.contains("segment:999") && text.contains("segment:100")),
+            "應該同時說出模型指的與實際給的上一張：{error:?}"
         );
     }
 
@@ -2939,6 +3163,7 @@ mod tests {
             from_ts: ts,
             to_ts: ts + 400_000,
             limit: 4,
+            after_core_start: None,
             only_core_start: None,
         };
         let result = run_for_test(&mut input).expect("run");
@@ -2997,6 +3222,7 @@ mod tests {
             from_ts: ts,
             to_ts: ts + 400_000,
             limit: 4,
+            after_core_start: None,
             only_core_start: Some(core),
         };
         let result = run_for_test(&mut input).expect("run");
@@ -3059,6 +3285,7 @@ mod tests {
             from_ts: ts,
             to_ts: ts + 400_000,
             limit: 4,
+            after_core_start: None,
             only_core_start: Some(core),
         })
         .expect("run");
@@ -3088,6 +3315,7 @@ mod tests {
             from_ts: ts,
             to_ts: ts + 400_000,
             limit: 4,
+            after_core_start: None,
             only_core_start: Some(core),
         })
         .expect("second run");
@@ -3121,6 +3349,7 @@ mod tests {
             from_ts: ts,
             to_ts: ts + 400_000,
             limit: 4,
+            after_core_start: None,
             only_core_start: Some(core),
         })
         .expect("run");
@@ -3162,6 +3391,7 @@ mod tests {
             from_ts: ts,
             to_ts: ts + 400_000,
             limit: 4,
+            after_core_start: None,
             only_core_start: None,
         };
         let stop_command = format!("sister --data-dir {} stop-all --off", dir.display());
@@ -3210,6 +3440,7 @@ mod tests {
             from_ts: ts,
             to_ts: ts + 400_000,
             limit: 4,
+            after_core_start: None,
             only_core_start: None,
         };
         let report = prepare(&mut input, test_unstopped_data_dir()).expect("prepare");

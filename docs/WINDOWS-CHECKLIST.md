@@ -64,9 +64,16 @@ installer 本身時，才另外下載 `sister.exe` 和 `sister-desktop.exe`，�
 
 - [ ] 安裝正式 Setup，先登入並選用 Grok CLI、簽第二張同意。錄一段含電話、金額與工作進度的
       可辨識文字，再從桌面分別提問。每題頂端先顯示「Grok CLI · 已使用本機記憶」，接著出現
-      1–3 句答案；每句下面至少一顆「本機出處」。點有畫面的來源要開 exact 原畫面，點只有
+      1–6 句答案；簡單事實仍要短答，需要解釋的問題才展開。每句下面至少一顆「本機出處」。
+      點有畫面的來源要開 exact 原畫面，點只有
       文字的來源要移到同一筆原文。再登入並選用另一支已安裝 CLI，重問後狀態與
       `sister.exe brain log` 都只能出現新選擇，不能仍綁著 Grok。
+- [ ] 錄下同一件事的起因、處理與結果，讓第一條查詢本身就有超過十筆命中，再問「為什麼會
+      這樣，後來怎麼了」。回答必須用到不同查詢與不同時間段的來源，按時間串成同一件事；
+      沒有來源支持因果時只能說先後，不能把每一筆各寫成互不相干的片段。
+- [ ] 連續錄三段同一件工作，中間刻意出現一個會推翻早期猜測的畫面，不先問問題。在「她知道了什麼」
+      與 `sister.exe brain log` 要看到三段按時間一張一張完成；第二、三張的新判讀要已反映前張與反證，
+      不能三張都像同批起跑前各自摘要。一段 CLI 故意回壞 JSON 後，後面的段仍要繼續，不能每 50ms 只燒同一段。
 - [ ] 問一題完全沒有命中的問題。畫面要指名目前 CLI「已查過本機記憶；目前沒有可引用的內容」，
       `brain log` 要有該題的「答題查詢」呼叫；不能因本機零命中就完全跳過 CLI。
 - [ ] 同一題底下仍須保留原本的 ★ facts 與 OCR 原文列表。讓 provider 回未知 ref、缺來源、
@@ -74,11 +81,12 @@ installer 本身時，才另外下載 `sister.exe` 和 `sister-desktop.exe`，�
       顯示半份模型答案。
 - [ ] 快速連問兩題，第一題的 CLI parent／child 都要結束，畫面只能出現第二題。動態回答尚在
       跑時再送日常短句，也必須完整交給目前選定的 CLI；`stop-all` 成功後不得冒出舊答案或聲音。
-- [ ] 開本機朗讀與 Azure 各驗一次。有成句時，只能讀那 1–3 句，不得再讀 facts、OCR、
+- [ ] 開本機朗讀與 Azure 各驗一次。有成句時，只能讀那 1–6 句，不得再讀 facts、OCR、
       「本機出處」、source ref 或 app／title／URL。packet trace 的 Azure body 也只能是成句正文。
 - [ ] 撤回第二張同意後再問同一題：0 provider request，完整本機列表仍能回答。重新簽回後，
       以 process monitor 驗 prompt 不在 argv、working directory 是一次性空目錄；CLI 收到的是
-      當前問題與最多 12 筆來源文字／metadata，沒有 screenshot bytes 或圖片路徑。
+      當前問題與最多 18 筆來源文字／metadata，沒有 screenshot bytes 或圖片路徑；L2 判讀不可帶
+      segment、confidence、author、continues 或 open questions。
 - [ ] `sister.exe brain log` 要把第一階段標成「答題查詢」、第二階段標成「答題層」，並分得出
       成功、取消、timeout、壞 JSON；外送列不可含問題或來源原文。題庫 latency 只算本機
       retrieval，兩階段 CLI duration 各自另列。

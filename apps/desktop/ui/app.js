@@ -5119,9 +5119,9 @@ function renderGrounded(synthesis, readings, facts, hits, queryId) {
   if (
     !Array.isArray(synthesis.sentences) ||
     synthesis.sentences.length < 1 ||
-    synthesis.sentences.length > 3
+    synthesis.sentences.length > 6
   ) {
-    throw new Error("成句答案必須是 1 到 3 句");
+    throw new Error("成句答案必須是 1 到 6 句");
   }
 
   const sourceTarget = (reference) => {
