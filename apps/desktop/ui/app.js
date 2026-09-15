@@ -1424,6 +1424,26 @@ function clearPersonaSpeaking() {
   avatar.classList.remove("speaking");
 }
 
+/*
+ * 本機答案朗讀那顆鍵的兩句話。形狀抄 Azure 那一顆（「■ 停止／取消 Azure 朗讀」），
+ * 因為它們是同一種東西：一顆鍵、一段可能很長的聲音、使用者按下去就該停得下來。
+ * 這一顆念的是整篇答案，`chunkLocalSpeech()` 一段 160 字，長答案比同意書第二張
+ * 那 46 秒還久。
+ */
+const ANSWER_READ_PLAY = "🔊 用本機聲音朗讀";
+const ANSWER_READ_STOP = "■ 停止本機朗讀";
+
+/** 正在念的是哪一顆鍵；`null` = 沒有在念。和 `azureAnswerButton` 同一個形狀。 */
+let localAnswerButton = null;
+
+function resetLocalAnswerButton() {
+  if (localAnswerButton) {
+    localAnswerButton.disabled = false;
+    localAnswerButton.textContent = ANSWER_READ_PLAY;
+  }
+  localAnswerButton = null;
+}
+
 function resetAzureAnswerButton() {
   if (azureAnswerButton) {
     azureAnswerButton.disabled = false;
@@ -1496,6 +1516,7 @@ function stopLocalSpeech() {
   localSpeechRevision += 1;
   globalThis.speechSynthesis?.cancel?.();
   setPersonaSpeaking(PERSONA_SPEAKING_LOCAL, false);
+  resetLocalAnswerButton();
   if (localSpeechPresentation !== null) {
     const presentation = localSpeechPresentation;
     localSpeechPresentation = null;
@@ -1581,7 +1602,7 @@ globalThis.speechSynthesis?.addEventListener?.("voiceschanged", refreshLocalSyst
  * 只接受瀏覽器明確標成 `localService` 的繁中／中文聲音。找不到就保持安靜；絕不
  * 因為系統 voice 缺席而選 remote voice。呼叫端必須仍在 trusted click 那條路上。
  */
-function speakWithLocalSystemVoice(text, presentation = null) {
+function speakWithLocalSystemVoice(text, presentation = null, button = null) {
   if (!personaVoiceEnabled || typeof globalThis.SpeechSynthesisUtterance !== "function") {
     return false;
   }
@@ -1599,11 +1620,18 @@ function speakWithLocalSystemVoice(text, presentation = null) {
   stopPersonaMedia();
   localSpeechPresentation = presentation;
   const revision = localSpeechRevision;
+  // 上面那行 `stopPersonaMedia()` 剛把上一顆鍵收回去；這一顆要在它之後才登記，
+  // 否則自己會把自己重設掉。
+  if (button !== null) {
+    localAnswerButton = button;
+    button.textContent = ANSWER_READ_STOP;
+  }
   let next = 0;
   const speakNext = () => {
     if (revision !== localSpeechRevision) return;
     if (next >= chunks.length) {
       setPersonaSpeaking(PERSONA_SPEAKING_LOCAL, false);
+      resetLocalAnswerButton();
       if (localSpeechPresentation === presentation) {
         localSpeechPresentation = null;
         releaseNativePresentation(presentation);
@@ -1626,6 +1654,7 @@ function speakWithLocalSystemVoice(text, presentation = null) {
       if (revision !== localSpeechRevision) return;
       localSpeechRevision += 1;
       setPersonaSpeaking(PERSONA_SPEAKING_LOCAL, false);
+      resetLocalAnswerButton();
       if (localSpeechPresentation === presentation) {
         localSpeechPresentation = null;
         releaseNativePresentation(presentation);
@@ -4744,9 +4773,16 @@ function answerReadLine() {
   const button = document.createElement("button");
   button.type = "button";
   button.className = "answer-read";
-  button.textContent = "🔊 用本機聲音朗讀";
+  button.textContent = ANSWER_READ_PLAY;
   button.addEventListener("click", async (event) => {
     if (event?.isTrusted !== true) return;
+    // 正在念的就是這一顆的話，這一下是停止。和 Azure 那顆鍵同一個形狀。
+    if (localAnswerButton === button) {
+      stopPersonaMedia();
+      personaLine.textContent = "本機朗讀已停止。";
+      personaLine.hidden = false;
+      return;
+    }
     // 這是新的播放意圖：就算最後找不到 localService voice，也要先停掉上一句
     // bundled Ogg／pending read，不能一邊說「沒有本機聲音」一邊繼續播舊台詞。
     stopPersonaMedia();
@@ -4758,7 +4794,7 @@ function answerReadLine() {
     const text = answerTextForLocalSpeech();
     if (text === "") return;
     if (invoke === null) {
-      if (speakWithLocalSystemVoice(text)) return;
+      if (speakWithLocalSystemVoice(text, null, button)) return;
     } else {
       const localIntent = localSpeechRevision;
       let presentation;
@@ -4774,7 +4810,7 @@ function answerReadLine() {
           if (localIntent === localSpeechRevision) readMasterStopState();
           return;
         }
-        if (speakWithLocalSystemVoice(text, presentation)) return;
+        if (speakWithLocalSystemVoice(text, presentation, button)) return;
         releaseNativePresentation(presentation);
       } catch (error) {
         releaseNativePresentation(presentation);
@@ -5311,6 +5347,11 @@ function renderHits(
 ) {
   azureAnswerLine = null;
   azureAnswerButton = null;
+  // 和上面那一行對稱。今天產品裡唯一走到 `renderHits()` 的是 `ask()`，而它開頭
+  // 就 `stopPersonaMedia()` 了（另外五個呼叫端是模組頂層的 `?hits=demo` 示範
+  // 分支，開機時跑完）——所以這一行現在到不了。留著是為了不讓兩顆同族的鍵一個
+  // 有、一個沒有；**不要替它宣稱成因**。
+  localAnswerButton = null;
   hitList.replaceChildren();
 
   const hasOverview = overview !== null && overview !== undefined;

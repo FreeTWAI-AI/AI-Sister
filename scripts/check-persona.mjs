@@ -2016,6 +2016,100 @@ console.log("⑥ 17 人固定語音與日常短句都走 bundled Ogg，不借系
     },
   );
 
+  /*
+   * 本機朗讀那顆鍵也要停得下來。
+   *
+   * 三顆播放鍵裡 Azure 那顆早就是 toggle（「■ 停止／取消 Azure 朗讀」），同意書
+   * 那顆在 alpha.144 補上了，而這一顆念的是**整篇答案**——`chunkLocalSpeech()`
+   * 一段 160 字，一份長答案念起來比同意書第二張那 46 秒還久，而他唯一的出口是
+   * 換一題、換角色或按全停。再按一次只會從頭重念。
+   */
+  const stopLocal = await open(persona("mimo", { voice_enabled: true }), {
+    systemVoices: [{ name: "Hanhan", lang: "zh-TW", localService: true }],
+    askResult: answerAskResult,
+  });
+  const localReadButton = () =>
+    stopLocal
+      .node("[data-hits]")
+      .querySelectorAll("button")
+      .find((item) => item.className === "answer-read");
+  const localLabel = (name) =>
+    new RegExp(`const ${name} = "([^"]+)";`).exec(SRC)?.[1] ?? null;
+  const localPlay = localLabel("ANSWER_READ_PLAY");
+  const localStop = localLabel("ANSWER_READ_STOP");
+
+  await stopLocal.ask("念一段長的");
+  // `localPlay !== localStop` 不是裝飾：把兩個常數設成同一句的時候，底下每一條
+  // 比較都還是成立，整節綠著而那顆鍵從此不再換字。實測過這一刀。
+  // 清單那一句也一起釘：`check-checklist-quotes-exist.py` 的 `MIN = 8` 會把短引號
+  // 當名詞跳過，所以那邊守不到「■ 停止本機朗讀」。
+  const localChecklist = read(join(ROOT, "docs/WINDOWS-CHECKLIST.md"));
+  check(
+    "前提：本機朗讀鍵畫出來了，兩個標籤不同句，而且驗收清單逐字抄的是同一組",
+    localPlay !== null &&
+      localStop !== null &&
+      localPlay !== localStop &&
+      localReadButton()?.textContent === localPlay &&
+      localChecklist.includes(`「${localPlay}」`) &&
+      localChecklist.includes(`「${localStop}」`),
+    { play: localPlay, stop: localStop, text: localReadButton()?.textContent },
+  );
+  await stopLocal.clickAnswerRead();
+  stopLocal.speaks[0]?.onstart?.();
+  check(
+    "念的時候那顆鍵自己說得出現在按下去會停",
+    stopLocal.speaks.length === 1 && localReadButton()?.textContent === localStop,
+    { speaks: stopLocal.speaks.length, text: localReadButton()?.textContent },
+  );
+
+  const cancelsBeforeToggle = stopLocal.cancels();
+  await stopLocal.clickAnswerRead();
+  check(
+    "念的時候再按一次是停止，不是從頭重念",
+    stopLocal.speaks.length === 1 &&
+      stopLocal.cancels() > cancelsBeforeToggle &&
+      !stopLocal.node("[data-avatar]").classList.contains("speaking") &&
+      localReadButton()?.textContent === localPlay,
+    {
+      speaks: stopLocal.speaks.length,
+      cancels: stopLocal.cancels(),
+      text: localReadButton()?.textContent,
+    },
+  );
+  check(
+    "而且她說了她停了——安靜地停下來和沒反應長得一樣",
+    stopLocal.node("[data-persona-line]").textContent === "本機朗讀已停止。" &&
+      !stopLocal.node("[data-persona-line]").hidden,
+    stopLocal.node("[data-persona-line]").textContent,
+  );
+
+  // 反向那一刀：停止不可以是「把鍵停用掉」。
+  await stopLocal.clickAnswerRead();
+  check("停止之後還能再按一次重念", stopLocal.speaks.length === 2, stopLocal.speaks.length);
+
+  // 第二條反向：自己念完不經過 `stopLocalSpeech()`，那一端要自己收。
+  stopLocal.speaks[1]?.onend?.();
+  check(
+    "自己念完之後那顆鍵也回到本機聲音朗讀",
+    localReadButton()?.textContent === localPlay,
+    localReadButton()?.textContent,
+  );
+  await stopLocal.clickAnswerRead();
+  check("念完之後再按仍然念得出來", stopLocal.speaks.length === 3, stopLocal.speaks.length);
+
+  // 第三條反向：async 失敗那一端也要收，不然「再按一次重播」旁邊是一顆寫著
+  // 「停止」的鍵。
+  stopLocal.speaks[2]?.onerror?.({ error: "voice-unavailable" });
+  check(
+    "本機 TTS 失敗之後那顆鍵也回到本機聲音朗讀",
+    localReadButton()?.textContent === localPlay &&
+      stopLocal.node("[data-persona-line]").textContent === "本機朗讀失敗。再按一次重播。",
+    {
+      text: localReadButton()?.textContent,
+      line: stopLocal.node("[data-persona-line]").textContent,
+    },
+  );
+
   const groundedLocal = await open(persona("mimo", { voice_enabled: true }), {
     systemVoices: [{ name: "Hanhan", lang: "zh-TW", localService: true }],
     askResult: {
@@ -2335,11 +2429,11 @@ console.log("⑧ Persona 點擊台詞獨立；所有文字問題都走大腦與�
   const answerRead = SRC.match(/function answerReadLine\(\) \{[\s\S]*?\n\}/u)?.[0] ?? "";
   check(
     "答案朗讀是 trusted click、本機系統語音，且先取得 master-stop presentation admission",
-    answerRead.includes('button.textContent = "🔊 用本機聲音朗讀"') &&
+    answerRead.includes("button.textContent = ANSWER_READ_PLAY") &&
       answerRead.includes("event?.isTrusted !== true") &&
       answerRead.includes('invoke("answer_local_speech_admit")') &&
       answerRead.includes("beginNativePresentation(presentation)") &&
-      answerRead.includes("speakWithLocalSystemVoice(text, presentation)"),
+      answerRead.includes("speakWithLocalSystemVoice(text, presentation, button)"),
     answerRead,
   );
   check(
@@ -2349,7 +2443,12 @@ console.log("⑧ Persona 點擊台詞獨立；所有文字問題都走大腦與�
       MAIN.includes("answer_local_speech_admit,") &&
       MAIN.includes("struct MasterStopPresentationView"),
   );
-  const localSpeech = SRC.match(/function speakWithLocalSystemVoice\(text, presentation = null\) \{[\s\S]*?\n\}/u)?.[0] ?? "";
+  // 錨點釘著整個簽章，第三個參數是 alpha.145 加的那顆鍵。抓不到就是 `""`，
+  // 底下兩條會一起紅——那是刻意的：改了簽章就要有人回來看這兩條還成不成立。
+  const localSpeech =
+    SRC.match(
+      /function speakWithLocalSystemVoice\(text, presentation = null, button = null\) \{[\s\S]*?\n\}/u,
+    )?.[0] ?? "";
   const mediaStop =
     SRC.match(
       /^function stopPersonaMedia\(\{ cancelAzureNative = true \} = \{\}\) \{[\s\S]*?^\}$/mu,
