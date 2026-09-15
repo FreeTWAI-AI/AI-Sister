@@ -1,6 +1,6 @@
 # HANDOFF — 交給下一位 agent（Codex）
 
-**寫於 2026-09-13，交接點 `9886ff5`。** 這份是「打開就能接著做」的交接紀錄，不是
+**更新於 2026-09-15；alpha.142 產品出貨點 `9162cf0`。** 這份是「打開就能接著做」的交接紀錄，不是
 路線圖。路線圖在 `docs/PHASES.md`，規格在 `docs/SPEC.md`，產品定義在
 `docs/PRODUCT.md`，工作紀律在 `AGENTS.md`。四份都要讀，順序就是這個順序。
 
@@ -12,6 +12,15 @@
 > tag CI 八個 job 全綠，四個 artifact 齊全。Ted 已在真 Windows 用正式 Setup 覆蓋舊版，
 > 確認舊角色、四張同意、Grok 選擇與記憶保留，且問答的本機出處可點回原截圖。精確人工
 > 驗收範圍記在 `docs/WINDOWS-CHECKLIST.md` 的 alpha.141 smoke，不把未做項目算通過。
+>
+> **Codex alpha.142 收據（2026-09-15）：**`9162cf0` 把背景解釋改成從前往後一次完成一段，
+> 前一張工作假設落地後才處理下一段；新證據會支持、推翻或修正同一套理解。答題檢索也改成
+> 多查詢輪流取證、保留原問題時間範圍、補開頭／中段／結尾或命中附近的 L2，再按時間成句。
+> `v0.1.0-alpha.142` 已公開；tag run `34932696475` attempt 2 的八個 job 全部 success。
+> attempt 1 只在最後的 Windows 簽章 fixture 第二次 NSIS bundle 遇到一次 runner 連線
+> `10054`，同一 commit 重跑已通過，沒有產品改碼。Release 有四個 uploaded artifact：
+> `AI-Sister-Setup.exe` 276,017,955 bytes、`sister-desktop.exe` 69,828,608 bytes、
+> `sister.exe` 10,929,152 bytes、`AI-Sister-Linux-X11-amd64.deb` 63,810,044 bytes。
 
 ---
 
@@ -51,12 +60,12 @@
 
 | | |
 |---|---|
-| 這一段的執行者 | Claude Code（Opus 5, 1M context），session `e74b7a6f-34e8-4500-925c-8e0d020ac13c` |
+| 這一段的執行者 | 原主段是 Claude Code（Opus 5, 1M context），session `e74b7a6f-34e8-4500-925c-8e0d020ac13c`；alpha.142 由 Codex 續接 |
 | 時間範圍 | 2026-09-09T05:04:30Z → 2026-09-13T05:16:53Z（UTC，約四天，中途壓縮二十餘次） |
-| 目前已出貨 HEAD | `9c6fbca`，**已 push**，tag `v0.1.0-alpha.141` |
-| alpha.141 CI | tag run 八個 job 全部 `success`；Release 已發布且四個 artifact 齊全 |
+| 目前已出貨 HEAD | `9162cf0`，**已 push**，tag `v0.1.0-alpha.142` |
+| alpha.142 CI | tag run `34932696475` attempt 2 八個 job 全部 `success`；Release 已發布且四個 artifact 齊全 |
 | 本機閘門 | 本機的 gates-all.sh（見第 7 節，**不在 repo 裡**）報 **通過 52 條，失敗 0 條** |
-| 已公開的最後一版 | `v0.1.0-alpha.141`，published 2026-09-13T07:27:40Z |
+| 已公開的最後一版 | `v0.1.0-alpha.142`，published 2026-09-15T07:05:46Z |
 | alpha.141 真機 | 正式 Setup 覆蓋成功；舊 persona／同意／Grok／記憶保留，本機出處可點回原截圖 |
 | alpha.141 後續 | 真機 receipt／交接更新；CI 的 GitHub Actions 已升到 Node 24 majors，branch run `34793019345` 六個平台 job 全綠。沒有產品程式碼或新出貨內容 |
 
@@ -137,8 +146,11 @@ Developer ID、notarization 與真機 TCC 收據。
   `67ca70d` 將六個 upload 升到 v7、五個 release download 升到 v8，Pages 三顆升到
   configure v6／upload v5／deploy v5；`c645375` 同步網站 gate。branch run `34793019345`
   六個平台 job 全綠、六個 upload 點全數成功且沒有 Node 20 annotation。Release download
-  與 Pages 只在 tag job 執行，下一個正式 tag 必須回頭確認；branch success 不冒充它們跑過。
-  沒有尚待出貨的產品程式碼。現在的下一步仍是第 5 節步驟 3，不重切同一版。
+  與 Pages 只在 tag job 執行；alpha.142 的 tag run `34932696475` 已把兩者真的跑過。
+- `9162cf0` 回應 Ted 對片段回答與「問了才想」的批評：背景 L2 現在按時間逐段修正同一套
+  工作假設；S1 答題則讓多條查詢、原問題時間範圍與鄰近 L2 一起形成有前後文的來源集。
+  `v0.1.0-alpha.142` 已公開，沒有尚待出貨的產品程式碼。下一步仍是第 5 節步驟 3 的真機驗收，
+  不重切同一版。
 
 ### 4.2 交接更正：#42 的 URL 設定已完成
 
@@ -215,14 +227,20 @@ gh run list --limit 3 --json headSha,status,conclusion \
 假紅）。打完 tag 要回頭確認 release job 真的跑了——linux job 一紅，release job 會
 被靜靜跳過。
 
-### 步驟 3（進行中）：不要重做 #42；在正式 artifact 上逐項實測
+### 步驟 3（進行中）：在 alpha.142 正式 artifact 上驗背景連續理解與完整回答
 
-#42 已在 alpha.100 完成，證據見第 4.2 節。alpha.141 的 release job 已公開四個 artifact；
-Ted 已完成第一條覆蓋升級 smoke。現在照 `docs/WINDOWS-CHECKLIST.md` 一次走一個尚未勾掉
-的真 Windows 項目。固定字串 `ZQX-8147-NEVER` 已被開發對話錄到；alpha.141 正確引用今天
-的來源並拒絕把它說成昨天的記錄，但那不是零命中。下一條要先從系統匣暫停錄製，確認暫停後
-才在 PowerShell 產生一個從未顯示過的新 GUID，保持暫停拿它提問，最後恢復錄製。Ted 尚未
-回報這條結果；不要預先勾選，也不要拿另一輪 source gate 代替正式安裝副本上的結果。
+alpha.142 的 release job 已公開四個 artifact；CI 已驗 build、installer、alpha.110→current
+升級與記憶保留，但不冒充 Ted 的真日常畫面。先安裝正式 Setup，照
+`docs/WINDOWS-CHECKLIST.md` 新增的兩條 S1 項目實測：
+
+1. 不先問問題，連續錄同一件工作的起因、處理、反證與結果，再看「她知道了什麼」；後段判讀
+   必須真的改寫前段工作假設，不能每張只是孤立摘要。
+2. 再問「為什麼會這樣，後來怎麼了」；答案要按時間串成一段、來源跨過不同查詢與時間段，
+   沒證據時不能把先後冒充因果。
+
+alpha.141 尚未收掉的零命中 smoke 仍有效：先暫停錄製，確認停下後才產生從未顯示過的新 GUID，
+保持暫停拿它提問，最後恢復錄製。Ted 尚未回報上述三條；不要預先勾選，也不要拿 CI fixture
+或另一輪 source gate 代替正式安裝副本上的結果。#42 已在 alpha.100 完成，不要重做。
 
 ---
 
