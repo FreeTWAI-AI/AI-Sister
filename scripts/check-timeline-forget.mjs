@@ -658,6 +658,114 @@ console.log("⑪ 錄過但一列都沒存：指到 doctor，不指不存在的�
   check("不再指向設定頁的開始記錄段落", !source.includes("先到設定頁看「開始記錄」那一段"));
 }
 
+console.log("⑫ 「看當時的畫面」開不起來的時候，這一頁要說一聲");
+{
+  // app.js 那四顆同名的鍵在 alpha.150 修過（`check-pet-says-why.mjs` §91），而
+  // 這一頁的三顆當時被寫成「射不到的自白」。同一個病：`open_frame` 是
+  // `Result<(), String>`，三個呼叫端各自 `void invoke?.(…)`，沒有人 `.catch`，
+  // 這一頁也沒有 `unhandledrejection` 的接口——那個錯掉在地上，按下去什麼都
+  // 沒發生，和「我根本沒按到」逐像素相同。
+  //
+  // 兩層。第一層從原始碼出發：`open_frame` 在 timeline.js 的非註解行只准出現
+  // 一次，就是 `openFrame` 那支 helper 裡面。第四顆鍵自己去叫 invoke，這一條
+  // 當場紅。第二層真的去按。
+  const productLines = read(SRC)
+    .split("\n")
+    .map((line, i) => [i + 1, line])
+    .filter(([, line]) => {
+      const t = line.trim();
+      return !t.startsWith("*") && !t.startsWith("//") && !t.startsWith("/*");
+    });
+  const callSites = productLines.filter(([, line]) => line.includes("open_frame"));
+  check("timeline.js 的產品碼裡只有一個地方叫得到 open_frame", callSites.length === 1, callSites);
+  check(
+    "而那一行就在 openFrame 那支 helper 裡",
+    /invoke\?\.\("open_frame"/u.test(callSites[0]?.[1] ?? "") &&
+      read(SRC).includes("function openFrame(frameId) {"),
+    callSites[0],
+  );
+
+  // 少了 `.catch`，那個 rejection 在 Node 底下會直接把這支殺掉——閘門是紅的，
+  // 而沒有任何一條斷言抓到它，輸出還在半路斷掉。那個紅是 Node 的性質，不是產品
+  // 的：真的 webview 裡沒有人會死，它只是安靜地什麼都不做，而那正是要抓的東西。
+  const dropped = [];
+  const onDropped = (err) => dropped.push(String(err?.message ?? err));
+  process.on("unhandledRejection", onDropped);
+
+  const BOOM = "TIMELINE_OPEN_FRAME_BLEW_UP";
+  const press = async (button) => {
+    for (const fn of button.handlers.click ?? []) fn();
+    await tick();
+  };
+  const GUESS_CARD = {
+    id: 9001,
+    segment_ref: 1,
+    activity: "在看帳單",
+    model_confidence: 0.31,
+    evidence: [{ kind: "frame", id: 4242, label: "畫面 #4242" }],
+  };
+  // driver 只負責「把畫面開起來、交出一顆鍵」，**斷言一條都不在 driver 裡**：
+  // 補一個空殼 driver 要過不了關。
+  const drivers = {
+    "時間軸那一列的「看當時的畫面」": async (openFrameResult) => {
+      const page = await open({ open_frame: openFrameResult });
+      return { page, button: page.node("[data-moments]").querySelector(".see") };
+    },
+    "她猜的那張卡底下的「根據」": async (openFrameResult) => {
+      const page = await open({
+        open_frame: openFrameResult,
+        memory_current_guess: { message: "上一段在看帳單", card: null },
+        memory_guesses: [GUESS_CARD],
+      });
+      // 換到「她猜的」那一頁，走法和 ⑨ 的 `openOutbound` 一樣：那個 handler 掛
+      // 在 `[data-views]` 上，靠 `ev.target.closest("[data-view]")` 認人。
+      const views = page.node("[data-views]");
+      const btn = { getAttribute: (name) => (name === "data-view" ? "guess" : null) };
+      const ev = { target: { closest: (sel) => (sel === "[data-view]" ? btn : null) } };
+      for (const fn of views.handlers.click ?? []) fn(ev);
+      await tick();
+      return { page, button: page.node("[data-memory]").querySelector(".see") };
+    },
+  };
+
+  for (const [name, drive] of Object.entries(drivers)) {
+    // 對照組先跑：開得起來的時候**不准**有話說。少了這一條，helper 寫成「每次都
+    // 抱怨一句」也是綠的，而那比沉默更糟。
+    const okRun = await drive(null);
+    check(`${name}：這顆鍵找得到`, okRun.button != null, okRun.button);
+    await press(okRun.button);
+    check(`${name}：開得起來的時候不多嘴`, !okRun.page.say().includes("打不開"), okRun.page.say());
+    check(
+      `${name}：而且真的去開了`,
+      okRun.page.calls.includes("open_frame"),
+      okRun.page.calls,
+    );
+
+    const bad = await drive(new Error(BOOM));
+    await press(bad.button);
+    const said = bad.page.say();
+    check(`${name}：開不起來要說一聲`, said.includes("打不開"), said);
+    // 原話照抄，理由和 `frame.js` 那邊一樣：只有 Rust 分得出是哪一種開不起來，
+    // 這一頁不准自己編一個成因。
+    check(`${name}：而且照抄 Rust 給的理由`, said.includes(BOOM), said);
+    // 說在回條那一格，不是蓋掉這一天的摘要——後者是一句持續為真的話。
+    check(`${name}：沒有蓋掉這一天的摘要`, !bad.page.sub().includes("打不開"), bad.page.sub());
+  }
+
+  // 兩拍：rejection 是下一個 microtask 才送到 `unhandledRejection` 的。
+  await tick();
+  await tick();
+  check("沒有任何 open_frame 的錯掉在地上", dropped.length === 0, dropped);
+  process.off("unhandledRejection", onDropped);
+
+  /* 這一節抓不到什麼，講清楚——不然下一輪會有人以為它守住了整條路：
+   *
+   *   承諾那一頁的 `pledgeRow` 也有一顆「根據」鍵，這一節沒有按過它。它走的是
+   *   同一支 helper（第一層蓋得到「有沒有人繞過」），但「按下去真的說了話」在
+   *   這裡沒有被按過一次——把那顆鍵的 click handler 整個拿掉，這一節照樣綠。
+   *   拿 `want=綠` 的刀量過，不是推出來的。 */
+}
+
 console.log("");
 if (failed > 0) {
   console.log(`✗ ${failed} 條沒過——那顆不可逆的按鈕停在一個它不該停的狀態。`);

@@ -111,6 +111,28 @@ function tell(message, bad = false) {
   el.say.classList.toggle("bad", bad);
 }
 
+/**
+ * 「看當時的畫面」那三顆鍵共用的唯一一條路。
+ *
+ * `open_frame` 在 Rust 那邊是 `Result<(), String>`——視窗建不起來的時候它會照實
+ * 回錯。這三個呼叫端以前各自把它 `void` 掉，於是那個錯掉在地上：沒有人 `.catch`，
+ * 這一頁也沒有 `unhandledrejection` 的接口。畫面上的結果是**按下去什麼都沒發生**，
+ * 和「我根本沒按到」逐像素相同。app.js 那四顆鍵同一個病，`30cac18` 先修了那一半。
+ *
+ * 視窗開起來**之後**的事不歸這裡管：圖只寫了一半、過了保留期、檔案被外部移走，
+ * 都由 `frame.js` 在那扇視窗裡說。這裡只負責「那扇視窗根本沒開起來」——它是唯一
+ * 一種沒有視窗可以拿來說話的失敗，所以話只能說在他剛按下去的這一頁上。
+ *
+ * 借 [`tell`] 不借 [`say`]：`say` 那一格是**這一天的摘要**，蓋掉它等於拿一句
+ * 一次性的失敗換掉一句持續為真的話；`tell` 那一格本來就是「他手指剛剛按下去的
+ * 那一下」的回條（忘掉那顆鍵在用），換一天、換一頁自己會清掉。
+ */
+function openFrame(frameId) {
+  void invoke?.("open_frame", { frameId })?.catch?.((err) => {
+    tell(`當時的畫面打不開：${String(err?.message ?? err)}`, true);
+  });
+}
+
 // ---------- 把一天排成一列 ----------
 
 /**
@@ -292,9 +314,7 @@ function momentRow(m) {
     see.className = "see";
     see.type = "button";
     see.textContent = "看當時的畫面";
-    see.addEventListener("click", () => {
-      void invoke?.("open_frame", { frameId: m.frame_id });
-    });
+    see.addEventListener("click", () => openFrame(m.frame_id));
     body.append(see);
   }
 
@@ -697,9 +717,7 @@ function guessRow(card, place = "day") {
         see.type = "button";
         see.className = "see";
         see.textContent = e.label ?? `畫面 #${e.id}`;
-        see.addEventListener("click", () => {
-          void invoke?.("open_frame", { frameId: e.id });
-        });
+        see.addEventListener("click", () => openFrame(e.id));
         ev.append(see);
       } else {
         const fact = document.createElement("span");
@@ -1529,9 +1547,7 @@ function pledgeRow(c) {
         see.type = "button";
         see.className = "see";
         see.textContent = e.label ?? `畫面 #${e.id}`;
-        see.addEventListener("click", () => {
-          void invoke?.("open_frame", { frameId: e.id });
-        });
+        see.addEventListener("click", () => openFrame(e.id));
         ev.append(see);
       } else {
         const fact = document.createElement("span");
