@@ -994,6 +994,17 @@ let personaTapLines = true;
 let lastSpokenLineId = null;
 let personaVoiceEnabled = false;
 let voiceRequest = 0;
+/**
+ * 正在念的那一段條文錄音是哪一代 `voiceRequest`；`null` = 沒有在念。
+ *
+ * **不要另外開一個 boolean。** 停掉聲音的路有五條（回答那張、換角色、送新問題、
+ * 全停、關視窗），每一條走的都是 `stopPersonaMedia()`，而它本來就會把
+ * `voiceRequest` 加一。把「正在念」寫成「我記下的那一代還是現在這一代」，那五條
+ * 就全部免費清乾淨，沒有第二個寫入端，也不會留下一顆卡在「停止朗讀」的按鈕。
+ *
+ * 唯一不走那條路的是**自己念完**（`onended`），所以播完的那一端要自己收。
+ */
+let consentReadingRequest = null;
 let personaRevision = 0;
 // Desktop 開場先用 HTML 的 ChatGPT WebP 當可見 fallback；native persona_read 回來前
 // 還不知道真正 active ID，不能先把 25 張 ChatGPT PNG 解碼、隨即又整組丟掉。
@@ -1347,12 +1358,7 @@ function applyPersona(view) {
   avatar.disabled = !personaEnabled || !personaTapLines;
   clearPersonaLine();
   paintPersonaPortrait();
-  if (consentGuideSheet !== null && consentListen) {
-    const clip = consentClipFor(consentGuideSheet);
-    consentListen.disabled = clip === null;
-    consentListen.title =
-      clip === null ? "這一版條文沒有相符的本機錄音" : "用目前角色的聲音朗讀";
-  }
+  paintConsentListen();
   updateMotionGate();
   paint();
   return true;
@@ -1381,6 +1387,15 @@ let azurePlaybackPresentation = null;
 // 重播。用物件 identity，不讓一個拼錯的字串想當哪一種就當哪一種。
 const AZURE_AUTO_ANSWER = Object.freeze({});
 const AZURE_TRUSTED_REPLAY = Object.freeze({});
+
+/*
+ * 同一顆按鈕的兩句話。第二張條文在 alpha.143 之後是 32.8–46.0 秒（中位 38.1），
+ * 第四張 19.1–28.8 秒——沒有停止鍵的話，他按下去就得整段聽完，而想中斷時再按
+ * 一下只會從 0 重播。`■` 是幾何符號不是 emoji：alpha.127 的 `⚙`（U+2699）在
+ * Ted 的 WebView2 上整顆沒畫出來，而那一種是有 emoji 變體的。
+ */
+const CONSENT_LISTEN_PLAY = "🔊 念給我聽";
+const CONSENT_LISTEN_STOP = "■ 停止朗讀";
 
 // 說話微動只跟著「已經開始播放」的那條聲音走，不跟 request、答案完成或 thinking
 // 狀態走。owner identity 讓舊 utterance/audio 的晚 end 不能清掉後來的新聲音。
@@ -1505,6 +1520,9 @@ function stopPersonaMedia({ cancelAzureNative = true } = {}) {
   }
   stopLocalSpeech();
   clearPersonaSpeaking();
+  // 上面那行 `voiceRequest += 1` 已經讓 `consentIsReading()` 變成 false；這裡只是
+  // 把那件事畫出來。五條停止路徑共用這一個出口，所以按鈕不會卡在「停止朗讀」。
+  paintConsentListen();
 }
 
 /**
@@ -1997,12 +2015,35 @@ function showConsentGuide(view) {
   hitList.hidden = true;
   document.body.classList.remove("has-hits");
   document.body.classList.add("has-consent-guide");
-  const clip = consentClipFor(consentGuideSheet);
-  consentListen.disabled = clip === null;
-  consentListen.title = clip === null ? "這一版條文沒有相符的本機錄音" : "用目前角色的聲音朗讀";
+  paintConsentListen();
   setConsentGuideInput(!consentGuideBusy);
   paintConversation();
   return true;
+}
+
+/** 我記下的那一代還在不在。見 `consentReadingRequest`。 */
+function consentIsReading() {
+  return consentReadingRequest !== null && consentReadingRequest === voiceRequest;
+}
+
+/**
+ * 那顆朗讀鍵長什麼樣，只有這一支說了算。
+ *
+ * 以前同一條規則抄在兩個地方（換角色時一份、換條文時一份），兩份不同步不會有
+ * 任何畫面上的症狀——而現在它多了第三個狀態（正在念），抄三份必然會漂。
+ */
+function paintConsentListen() {
+  if (!consentListen || consentGuideSheet === null) return;
+  const clip = consentClipFor(consentGuideSheet);
+  const reading = consentIsReading();
+  consentListen.disabled = clip === null;
+  consentListen.textContent = reading ? CONSENT_LISTEN_STOP : CONSENT_LISTEN_PLAY;
+  consentListen.title =
+    clip === null
+      ? "這一版條文沒有相符的本機錄音"
+      : reading
+        ? "停止這一段朗讀"
+        : "用目前角色的聲音朗讀";
 }
 
 function hideConsentGuide() {
@@ -2102,6 +2143,12 @@ async function readConsentGuide() {
 
 async function playConsentSheet(event) {
   if (event?.isTrusted !== true || consentGuideSheet === null || consentGuideBusy) return;
+  // 正在念的時候，這一下是**停止**。trusted 檢查留在上面那一行，停止也走同一道
+  // 閘門——這顆按鈕只有一條路進來，不替「頁面上的腳本」另開一個分支。
+  if (consentIsReading()) {
+    stopPersonaMedia();
+    return;
+  }
   const clip = consentClipFor(consentGuideSheet);
   if (
     clip === null ||
@@ -2139,6 +2186,10 @@ async function playConsentSheet(event) {
     if (finished) return;
     finished = true;
     if (request === voiceRequest) setPersonaSpeaking(PERSONA_SPEAKING_FIXED, false);
+    if (consentReadingRequest === request) {
+      consentReadingRequest = null;
+      paintConsentListen();
+    }
     personaAudio.onended = null;
     personaAudio.onerror = null;
     personaAudio.removeAttribute?.("src");
@@ -2158,6 +2209,8 @@ async function playConsentSheet(event) {
     await personaAudio.play();
     if (request === voiceRequest && !finished) {
       setPersonaSpeaking(PERSONA_SPEAKING_FIXED, true);
+      consentReadingRequest = request;
+      paintConsentListen();
     }
   } catch {
     personaAudio.onerror?.();

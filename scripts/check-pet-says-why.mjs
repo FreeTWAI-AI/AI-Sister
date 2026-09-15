@@ -3923,7 +3923,7 @@ console.log("84. CLI 回 consent_required 時保留原問題；補答後同一�
   );
 }
 
-console.log("85. 條文錄音只能由 trusted click 播，而且逐字稿必須等於 native 條文");
+console.log("85. 條文錄音只能由 trusted click 播，而且同一顆按鈕停得下來");
 {
   const p = await open(
     {
@@ -3949,6 +3949,144 @@ console.log("85. 條文錄音只能由 trusted click 播，而且逐字稿必須
         "./persona-consent-voices/v1/chatgpt/local-recording.ogg" &&
       p.invokes.some(({ cmd }) => cmd === "persona_fixed_voice_admit"),
     { plays: p.audioPlays(), src: p.node("[data-persona-audio]").src, invokes: p.invokes },
+  );
+  check(
+    "正在念的時候，按鈕自己說得出現在按下去會停",
+    p.consentListen().textContent.includes("停止") && p.consentListen().disabled !== true,
+    p.consentListen().textContent,
+  );
+
+  // 合成 click 不准播，也不准停。停止本身不產生輸出，但這顆按鈕只有一條路，
+  // 把 trusted 檢查留在最前面才不會多開一個「頁面上的腳本按得到」的分支。
+  const playingPauses = p.audioPauses();
+  await p.clickElement(p.consentListen(), { trusted: false });
+  check(
+    "播放中的合成 click 既不重播也不停",
+    p.audioPlays() === 1 && p.audioPauses() === playingPauses,
+    { plays: p.audioPlays(), pauses: p.audioPauses() },
+  );
+
+  // alpha.143 之後第二張是 32.8–46.0 秒（中位 38.1），第四張 19.1–28.8 秒。
+  // 再按一次必須是**停止**，不是從 0 重播——重播的話他按了想中斷的那一下，
+  // 反而讓自己又要從頭聽一遍，而畫面上沒有第二個出口（回答那張、換角色、
+  // 全停、關視窗）。
+  // lease 要數，不要 `includes`。重播那條路自己也會 end 一次舊的，所以
+  // 「清單裡出現過 end」在壞的那一邊同樣是真的——要問的是**這一下**有沒有還。
+  const endsOf = (view) =>
+    view.playbackTrace().filter((step) => step === "end:consent-voice").length;
+  const endsBefore = endsOf(p);
+  await p.clickElement(p.consentListen());
+  check(
+    "播放中再按一次是停止，不是從頭重播",
+    p.audioPlays() === 1 &&
+      p.audioPauses() > playingPauses &&
+      endsOf(p) > endsBefore &&
+      !p.isSpeaking(),
+    { plays: p.audioPlays(), pauses: p.audioPauses(), trace: p.playbackTrace() },
+  );
+  check(
+    "停下來之後按鈕自己說得出現在按下去會播",
+    p.consentListen().textContent.includes("念給我聽") &&
+      !p.consentListen().textContent.includes("停止"),
+    p.consentListen().textContent,
+  );
+
+  // 反向那一刀。少了它，「停止＝把按鈕停用掉」也會是綠的，而那是另一種壞法：
+  // 他停下來之後就再也念不了了。
+  await p.clickElement(p.consentListen());
+  check(
+    "停止之後還能再按一次重新念",
+    p.audioPlays() === 2,
+    { plays: p.audioPlays(), trace: p.playbackTrace() },
+  );
+
+  // 第二條反向。自己念完那條路不經過 `stopPersonaMedia()`，所以「正在念」那個
+  // 狀態要由播完的那一端自己收掉；漏了的話按鈕會卡在「停止朗讀」，而下一下按
+  // 下去什麼都不會發生。
+  p.finishAudio();
+  check(
+    "自己念完之後按鈕也回到念給我聽",
+    p.consentListen().textContent.includes("念給我聽") &&
+      !p.consentListen().textContent.includes("停止"),
+    p.consentListen().textContent,
+  );
+  await p.clickElement(p.consentListen());
+  check("念完之後再按仍然播得出來", p.audioPlays() === 3, {
+    plays: p.audioPlays(),
+    trace: p.playbackTrace(),
+  });
+
+  // 條文改版、錄音還是舊的那一種。`consentClipFor()` 比的是逐字稿等不等於 native
+  // 條文，對不上就不准播——而這顆按鈕**一畫出來**就要是灰的，不能等他按下去才
+  // 發現沒事發生。這一刀補的是「換條文時畫一次」那個呼叫端：兩份重複的畫法收成
+  // 一支之後，沒人守的呼叫端會安靜地從畫面上消失。
+  const stale = consentVoiceManifest();
+  for (const clip of stale.clips) clip.text = `${clip.text}（上一版的條文）`;
+  const mismatched = await open(
+    {
+      consent_read: consentView([false, false, false, false], [false, false, false, false]),
+      persona_fixed_voice_admit: { presentation_id: "consent-voice" },
+      master_stop_presentation_begin: true,
+      master_stop_presentation_end: null,
+    },
+    { consentVoices: stale },
+  );
+  check(
+    "逐字稿對不上這一版條文時，朗讀鍵一出現就是灰的並且說明原因",
+    mismatched.consentListen().disabled === true &&
+      mismatched.consentListen().title.includes("沒有相符的本機錄音") &&
+      mismatched.consentListen().textContent.includes("念給我聽"),
+    {
+      disabled: mismatched.consentListen().disabled,
+      title: mismatched.consentListen().title,
+      text: mismatched.consentListen().textContent,
+    },
+  );
+  await mismatched.clickElement(mismatched.consentListen());
+  check(
+    "灰掉的朗讀鍵按下去不取 native admission、也不播",
+    mismatched.audioPlays() === 0 &&
+      !mismatched.invokes.some(({ cmd }) => cmd === "persona_fixed_voice_admit"),
+    { plays: mismatched.audioPlays(), invokes: mismatched.invokes },
+  );
+
+  /*
+   * 這兩個標籤和驗收清單上抄的那兩句，必須是同一個字串。
+   *
+   * `check-checklist-quotes-exist.py` 守不到它們：那支腳本的 `MIN = 8` 把短引號
+   * 當名詞跳過，而「■ 停止朗讀」只有 6 個字。它自己的檔頭寫過為什麼這件事比
+   * 假綠貴——他照著清單去找一顆寫著舊字的鍵，找不到，然後回報一個沒有壞的東西
+   * 壞了。所以在這裡補：**從 app.js 讀出來比**，不要在測試裡另抄一份。
+   */
+  const labelOf = (name) =>
+    new RegExp(`const ${name} = "([^"]+)";`).exec(read(SRC))?.[1] ?? null;
+  const play = labelOf("CONSENT_LISTEN_PLAY");
+  const stop = labelOf("CONSENT_LISTEN_STOP");
+  const checklist = read(resolve(UI, "../../../docs/WINDOWS-CHECKLIST.md"));
+  check(
+    "兩個標籤都還在，而且驗收清單上逐字抄的是同一組",
+    play !== null &&
+      stop !== null &&
+      play !== stop &&
+      checklist.includes(`「${play}」`) &&
+      checklist.includes(`「${stop}」`),
+    { play, stop },
+  );
+  const labelled = await open(
+    {
+      consent_read: consentView([false, false, false, false], [false, false, false, false]),
+      persona_fixed_voice_admit: { presentation_id: "consent-voice" },
+      master_stop_presentation_begin: true,
+      master_stop_presentation_end: null,
+    },
+    { consentVoices: consentVoiceManifest() },
+  );
+  const before = labelled.consentListen().textContent;
+  await labelled.clickElement(labelled.consentListen());
+  check(
+    "畫面上那顆鍵的兩個樣子就是那兩個常數，沒有第三份文案",
+    before === play && labelled.consentListen().textContent === stop,
+    { before, playing: labelled.consentListen().textContent, play, stop },
   );
 }
 
