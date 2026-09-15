@@ -1,6 +1,6 @@
 # HANDOFF — 交給下一位 agent（Codex）
 
-**更新於 2026-09-15；alpha.142 產品出貨點 `9162cf0`。** 這份是「打開就能接著做」的交接紀錄，不是
+**更新於 2026-09-15；alpha.143 產品出貨點 `2de931b`。** 這份是「打開就能接著做」的交接紀錄，不是
 路線圖。路線圖在 `docs/PHASES.md`，規格在 `docs/SPEC.md`，產品定義在
 `docs/PRODUCT.md`，工作紀律在 `AGENTS.md`。四份都要讀，順序就是這個順序。
 
@@ -21,6 +21,27 @@
 > `10054`，同一 commit 重跑已通過，沒有產品改碼。Release 有四個 uploaded artifact：
 > `AI-Sister-Setup.exe` 276,017,955 bytes、`sister-desktop.exe` 69,828,608 bytes、
 > `sister.exe` 10,929,152 bytes、`AI-Sister-Linux-X11-amd64.deb` 63,810,044 bytes。
+>
+> **Codex alpha.143 收據（2026-09-15）：**`2de931b` 補上一次性的舊記憶重讀：第一次在新條文下
+> 取得第二張同意後固定歷史右界，從最早仍保留的事件按六小時窗往後掃，一次完成一段、進度寫回
+> SQLite 的 `meta`；現場優先，舊資料每天最多 20 段且不超過每日解釋預算的四分之一。第二張
+> `cloud-reading` 條文因此重寫（131 → 191 字，`CLOUD_READING_TERMS_VERSION` 1 → 2，升級只
+> 重問第二張），17 支 bundled 朗讀跟著重錄。`v0.1.0-alpha.143` 已公開；tag run `34959625002`
+> 第一次就八個 job 全部 success，沒有重跑。Release 有四個 uploaded artifact：
+> `AI-Sister-Setup.exe` 277,421,179 bytes、`sister-desktop.exe` 71,220,736 bytes、
+> `sister.exe` 10,945,536 bytes、`AI-Sister-Linux-X11-amd64.deb` 65,201,634 bytes。
+> Release body 和 `scripts/release-notes.sh v0.1.0-alpha.143` 逐字前綴相同，後面只多一行
+> GitHub 自己附加的 Full Changelog。
+>
+> **下一位動同意書語音之前先讀這三件事：**（1）alpha.137 那份切點檔一度遺失，重跑 polish
+> 會安靜地把 51 支「不該變的」換成另一批；切點已找回並存在 `~/voice-lab/`
+> `consent-voice-trims-consent-v1.json`，每一筆都以「切完重走流水線、解出來的 PCM 和出貨的
+> 那一支逐位元組相同」驗過。重跑一律帶 `--trims` 加 `--reuse-ogg-from`，它印的
+> 「原封搬回來的：N / 68」就是收據。（2）同意書那包的品管引擎是 Whisper `large-v3`，不是
+> `medium`；GPU 被佔住時用 `~/voice-lab/_a143_qc_fp16.py` 包一層（whisper 的 fp16 只轉 mel
+> 不轉權重，LayerNorm 要留在 fp32）。（3）新的 17 支朗讀是 32.8–46.0 秒，**超過
+> Breeze-ASR-25 的 30 秒硬上限**，所以 NOTICE 那句「兩個訓練資料不同的 ASR」目前只對 30 秒
+> 以內的那 51 支成立；要再拉長條文之前先確認第二個引擎吃不吃得下。
 
 ---
 
