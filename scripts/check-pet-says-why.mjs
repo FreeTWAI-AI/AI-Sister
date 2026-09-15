@@ -3082,6 +3082,9 @@ console.log("66. 未知 overview kind 是 contract error，不偽裝成沒有記
 
 console.log("67. kind、overview 與作者是封閉契約，錯線不能畫成正常答案");
 {
+  // 底下每個 ready 夾具都只有**一張**卡，而且那一張就是壞的——所以 throw
+  // 發生在任何一張卡被畫進 `hitList` 之前。這一節證得了「壞的不畫」，證不了
+  // 「已經畫出去的要收回」。「好的排在壞的前面」那一格在 67b。
   const cases = [
     answer({ kind: "memory_overview", overview: null }),
     answer({ kind: "keywords", overview: { kind: "raw_only" } }),
@@ -3127,6 +3130,74 @@ console.log("67. kind、overview 與作者是封閉契約，錯線不能畫成�
       p.hitTexts(),
     );
   }
+}
+
+console.log("67b. 第一張理解卡是好的、第二張壞掉：整份收回，不留半份");
+{
+  // 和 56g 同一把刀，打在另一支 renderer 上。`renderOverview` 的 ready 那一臂和
+  // `renderGrounded` 是**一樣的形狀**：先把開場白寫進 `hitList`，再邊驗邊
+  // `hitList.append(li)`。而 67 那三個壞卡片夾具全是 `cards: [一張壞的]`——壞的
+  // 排第一個，於是 throw 發生在任何一張卡被畫進去之前，「半份」那一格一樣沒人
+  // 造過。見 `a-suite-that-varies-the-wrong-axis-is-one-test` 那條。
+  //
+  // 兩支 renderer 現在靠的是**同一個**機制得救：`ask()` 的 catch 把整張清單
+  // `replaceChildren(failed)`。所以這一節真正守的不是「又一次一樣的行為」，是
+  // 「這兩支不准各自長出自己的 try/catch 把例外吞掉」——吞掉的那一版，56g 看不
+  // 見，因為它問的是另一支 renderer。底下的刀①就是那個。
+  const GOOD_ACTIVITY = "修好安裝更新";
+  const p = await open({
+    azure_tts_read: AZURE_READY,
+    ask: answer({
+      kind: "memory_overview",
+      // 見 56g：`answer()` 預設沒有 native lease，不帶 id 的話底下那條「票還
+      // 回去了」問的是一張從來沒發出來的票。
+      presentation_id: "67b-lease",
+      overview: {
+        kind: "ready",
+        cards: [
+          overviewCard(),
+          overviewCard({
+            segment_started_at: 1_755_000_001_000,
+            activity: "第二張卡的出處是壞的",
+            evidence: [{ frame_id: 0, label: "not-openable" }],
+          }),
+        ],
+        truncated: false,
+        evidence_unavailable: 0,
+      },
+    }),
+    recording_state: "recording",
+  });
+  await p.type("你知道了什麼");
+
+  check(
+    "一張理解卡都沒有畫出來",
+    p.hits().querySelectorAll(".overview-card").length === 0,
+    p.hitTexts(),
+  );
+  // 上面那條問 class，這一條問**那幾個字在不在畫面上**：把 class 拿掉而字留著
+  // 是一種修法，而使用者讀到的是字。
+  check(
+    "第一張卡那句話也不可以留著",
+    !p.hitTexts().some((line) => line.includes(GOOD_ACTIVITY)),
+    p.hitTexts(),
+  );
+  // 開場白是在迴圈**之前**就寫進去的，所以它比任何一張卡都早進 DOM。
+  check(
+    "連那句開場白都要收掉",
+    !p.hitTexts().some((line) => line.includes("我目前對最近幾段有這些理解")),
+    p.hitTexts(),
+  );
+  check("說得出壞在哪裡", p.line().includes("frame_id"), p.line());
+  check("而且明講這一題沒答成", p.hitTexts().some((line) => line.includes("沒答成")), p.hitTexts());
+  // 半份留在 DOM 裡的話，自動送 Azure 那條路（`data-azure-answer-body`）會在他
+  // 讀到錯誤訊息之前就把那張卡送上雲端——而它是一張被拒絕的答案。
+  check("一個字都沒送去 Azure", azureCalls(p).length === 0, azureCalls(p).map(({ arg }) => arg?.text));
+  check(
+    "畫到一半炸掉，native 那張票仍然還回去了",
+    p.playbackTrace().includes("end:67b-lease"),
+    p.playbackTrace(),
+  );
 }
 
 console.log("68. 全停中不可以出現『在聽』");
