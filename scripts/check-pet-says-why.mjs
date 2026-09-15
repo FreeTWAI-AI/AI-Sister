@@ -2106,6 +2106,9 @@ console.log("56a. RAG 成句逐句帶本機出處，Azure 只收到成句正文"
 
 console.log("56b. RAG IPC 來源對不上本機候選時整份拒絕");
 {
+  // 底下兩個壞夾具**都只有一句**，所以 `renderGrounded` 是在任何東西被畫進
+  // `hitList` 之前就 throw 的——這一節證得了「壞的不畫」，證不了「整份」。
+  // 「好的排在壞的前面」那一格在 56g，不要把它併回來。
   for (const synthesis of [
     {
       sentences: [
@@ -2136,6 +2139,74 @@ console.log("56b. RAG IPC 來源對不上本機候選時整份拒絕");
       { line: p.line(), hits: p.hitTexts() },
     );
   }
+}
+
+console.log("56g. 前一句是好的、後一句壞掉：整份拒絕的意思是連那句好的也不留");
+{
+  // 56b 和 56ab 都寫著「整份拒絕」「不畫半份」，而**那個處境它們一次都沒造出來
+  // 過**：56b 兩個壞夾具都只有一句，56ab 的第七句是被最前面那條長度檢查擋下來
+  // 的——兩種都在任何東西被 append 之前就 throw 了。`renderGrounded` 是**邊畫邊
+  // 檢查**的：第一句合格就 `hitList.append(li)`，第二句的 ref 對不上才 throw。
+  // 所以「半份」這件事只有在「好的排在壞的前面」時才存在，而那正是沒人試過的
+  // 那一格。見 `a-suite-that-varies-the-wrong-axis-is-one-test`。
+  const GOOD = "第一句有真的出處，看起來完全正常。";
+  const p = await open({
+    azure_tts_read: AZURE_READY,
+    ask: answer({
+      // `answer()` 預設 `presentation_id: null`＝「這份沒有 native lease」，而
+      // 產品 IPC 一定帶（見 `beginNativePresentation` 上的註解）。不帶的話底下
+      // 那條「票還回去了」問的是一張從來沒發出來的票——紅得毫無意義。
+      presentation_id: "56g-lease",
+      answers: [fact({ frame_id: 42 })],
+      synthesis: {
+        sentences: [
+          { text: GOOD, sources: [{ ref: "fact:9", label: "畫面 #42", frame_id: 42 }] },
+          {
+            text: "第二句引用了一個這一輪沒送過的來源。",
+            sources: [{ ref: "chunk:999", label: "文字 #999", frame_id: null }],
+          },
+        ],
+      },
+    }),
+    recording_state: "recording",
+  });
+  await p.type("把兩句一起講");
+
+  check(
+    "一句成句都沒有畫出來",
+    p.hits().querySelectorAll(".grounded-text").length === 0,
+    p.hitTexts(),
+  );
+  // 上面那條問的是 class，這一條問的是**那幾個字在不在畫面上**。分開兩條，因為
+  // 「把 class 拿掉但字還留著」是一種修法，而使用者讀到的是字。
+  check(
+    "那句好的也不可以留在畫面上任何地方",
+    !p.hitTexts().some((line) => line.includes(GOOD)),
+    p.hitTexts(),
+  );
+  check(
+    "說得出是哪一個來源對不上",
+    p.line().includes("成句答案找不到") && p.line().includes("chunk:999"),
+    p.line(),
+  );
+  check("而且明講這一題沒答成", p.hitTexts().some((line) => line.includes("沒答成")), p.hitTexts());
+  // 拒絕掉的半份不可以出境。`answerTextForLocalSpeech` 取的是 `.grounded-text`，
+  // 自動送 Azure 那條路走的是 `data-azure-answer-body`——半份留在 DOM 裡的話，
+  // 這一句會在他還沒讀到錯誤訊息之前就已經送上雲端了。
+  check("一個字都沒送去 Azure", azureCalls(p).length === 0, azureCalls(p).map(({ arg }) => arg?.text));
+  check(
+    "朗讀那兩顆鍵也不存在（沒有東西可以念）",
+    p.hits().querySelectorAll(".answer-read").length === 0,
+    p.hitTexts(),
+  );
+  // `renderHits` 是跑在 `commitNativePresentation` 的 callback 裡，而那一層只有
+  // `try/finally` 沒有 `catch`。少了那個 `finally`，畫到一半炸掉就會把 native
+  // 那張票永遠留在手上——畫面上看不出來，而她從此停不下來。
+  check(
+    "畫到一半炸掉，native 那張票仍然還回去了",
+    p.playbackTrace().includes("end:56g-lease"),
+    p.playbackTrace(),
+  );
 }
 
 console.log("56ab. 有前因後果的六句仍是一份可驗來源的答案，第七句整份拒絕");
