@@ -491,6 +491,17 @@ console.log("⑨ 外送紀錄：兩種空、沒送出去的原因、原文沒遮
       skips: [],
       outbound: [
         {
+          ts: D1 + 3_650_000,
+          command: "grok",
+          args: ["--verbatim"],
+          chars_sent: 91,
+          truncated: false,
+          outcome: "success",
+          duration_ms: 45,
+          error: null,
+          role: "interpreter_history",
+        },
+        {
           ts: D1 + 3_600_000,
           command: "claude",
           args: ["-p"],
@@ -552,6 +563,8 @@ console.log("⑨ 外送紀錄：兩種空、沒送出去的原因、原文沒遮
     },
   });
   const rolesText = roles.node("[data-outbound]").textContent;
+  check("歷史補讀有自己的中文層別", rolesText.includes("舊記憶重讀"), rolesText);
+  check("歷史補讀不會印成英文代號", !rolesText.includes("interpreter_history"), rolesText);
   check("盯梢層那一列講得出自己是哪一層", rolesText.includes("盯梢層"), rolesText);
   check("盯梢層不會印成英文的 watcher", !rolesText.includes("watcher"), rolesText);
   check("答題層與取消結局都用產品文字顯示", rolesText.includes("答題層") && rolesText.includes("已取消"), rolesText);

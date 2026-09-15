@@ -503,7 +503,10 @@ Wayland 才留到 P8／社群成熟化；Preview 的隱私與資料語意不因�
   所以錄一整天打開記憶瀏覽器是空的。現在錄製時起一條慢路徑執行緒，
   熱路徑只做一次 `AtomicBool` 寫入。alpha.142 起，背景從最早的未理解段一張一張往後做；
   前一張落地後才重讀 DB 做下一張，每次用新證據支持、推翻或修正目前工作假設；
-  有 backlog 就立即繼續，失敗段也不會堵住後面。它仍然只寫記憶、不主動開口〕
+  有 backlog 就立即繼續，失敗段也不會堵住後面。alpha.143 再把升級前已保留的歷史納入
+  一次性補讀：固定 cutoff 與 cursor 跨重開續跑、現場優先、每天最多 20 次且至多占每日
+  額度四分之一；只刷新純 Interpreter lineage，不蓋 Reviewer、使用者更正或合併結果。
+  第二張同意重簽前完全不啟動。它仍然只寫記憶、不主動開口〕
 - Reviewer（SPEC §6）：15–30min 批次 + 日終盤點、typed card merge、
   五類強制回查、雙 pass 分歧警報、回查率 log。
 - L3：commitments/entities/day_summaries + provenance cascade delete。

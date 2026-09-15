@@ -1452,6 +1452,7 @@ function outboundRole(value) {
   if (value === "answer") return "答題層";
   if (value === "reviewer") return "審閱層";
   if (value === "interpreter") return "解釋層";
+  if (value === "interpreter_history") return "舊記憶重讀";
   if (value === "watcher") return "盯梢層";
   return `不認得的層別（${value || "空值"}）`;
 }

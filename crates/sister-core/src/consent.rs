@@ -3,7 +3,7 @@
 //! 每一件事各自獨立、各自可以撤回：
 //!
 //! 1. **本機記錄**：在這台機器的硬碟上記錄螢幕。
-//! 2. **上雲解讀**：把使用者問題與本機記憶查詢命中的文字原文交給使用者設定的 CLI。
+//! 2. **上雲解讀**：把問題、選中的本機記憶文字與工作假設交給使用者設定的 CLI。
 //! 3. **畫面暫存**：保留變化幀的截圖（相對於「只留 OCR 出來的字」）。
 //! 4. **Azure 朗讀**：設定開啟後，每份新答案完成時把當前答案正文原文交給 Azure。
 //!
@@ -62,6 +62,10 @@ use crate::model::Millis;
 /// [`CLOUD_READING_TERMS_VERSION`] 獨立版本，只讓舊第二張失效，不連帶拿掉仍完全相同的
 /// 第一／第三張。
 ///
+/// alpha.143 把錄製期間已存在的背景解釋／審閱，以及新增的一次性舊記憶重讀
+/// 一起寫進第二張。alpha.126 的 v1 只明講「我輸入的問題與命中內容」，不能拿
+/// 那個簽名授權無須再提問的舊 OCR 自動外送，所以只升這張的獨立版本。
+///
 /// alpha.109 新增的 Azure TTS 是第四張**獨立**條文，沒改舊三張的 wording，
 /// 所以不把這個全局版本升到 4。舊的 version 3 檔案沒有 `azure_tts`，serde 會
 /// 讀成 `None`：舊三張的簽名繼續如實生效，但絕對不會順便授權新的出境路徑。
@@ -69,9 +73,9 @@ use crate::model::Millis;
 /// 一起清掉。
 pub const VERSION: u32 = 3;
 
-/// 第二張的獨立條文版本。沒有這個欄位的舊檔會讀成 0；當時只涵蓋把既有本機
-/// 候選交給 CLI 成句，不能授權先把每一題交給 CLI 決定要查哪些本機記憶。
-pub const CLOUD_READING_TERMS_VERSION: u32 = 1;
+/// 第二張的獨立條文版本。沒有這個欄位的舊檔會讀成 0；v1 只涵蓋問答，不能
+/// 授權錄製期間的背景理解與升級後一次舊記憶重讀。
+pub const CLOUD_READING_TERMS_VERSION: u32 = 2;
 
 /// 第四張的獨立條文版本。沒有這個欄位的 alpha.109 檔案會讀成 0；當時
 /// 簽的是「每次按下才送」，不能授權 alpha.110 的新答案自動送出。
@@ -92,10 +96,10 @@ pub struct Consent {
     /// 第一張：在我的硬碟上記錄我的螢幕。
     #[serde(default)]
     pub local_recording: Option<Millis>,
-    /// 第二張：把問題與本機記憶查詢命中的文字原文交給我設定的 CLI。
+    /// 第二張：把問題與選中的本機記憶文字／工作假設交給我設定的 CLI。
     #[serde(default)]
     pub cloud_reading: Option<Millis>,
-    /// 第二張簽的是哪一版條文。0 = alpha.125 以前的「本機先選候選、CLI 只成句」。
+    /// 第二張簽的是哪一版條文。0 = alpha.125 以前；1 = alpha.126 只明講問答。
     #[serde(default)]
     pub cloud_reading_terms_version: u32,
     /// 第三張：保留變化幀截圖。
@@ -157,7 +161,7 @@ impl Sheet {
         match self {
             Sheet::LocalRecording => "我同意在我的硬碟上記錄我的螢幕。",
             Sheet::CloudReading => {
-                "我同意把我在 AI-Sister 輸入的問題交給設定裡選定的 CLI，讓它決定要查哪些本機記憶；AI-Sister 會在本機執行查詢，再把命中的螢幕文字原文、時間、app、視窗標題與網址交回同一支 CLI 作答。永不送出畫面檔；文字裡有什麼就送什麼，不會先遮掉。"
+                "我同意讓設定裡選定的 CLI 解讀我的本機記憶。提問時會交出問題與查詢命中的文字；解釋、審閱、監督與錄製期間的背景理解會自動交出選定片段，包括升級後一次重讀的較早紀錄。內容可能包含螢幕文字原文、程式抽出的事實、既有工作假設、時間、app、視窗標題與網址，也可能重複呼叫 CLI 並使用我的 CLI 方案額度。永不送出畫面檔、資料庫路徑或整份資料庫；文字裡有什麼就送什麼，不會先遮掉。"
             }
             Sheet::FrameStorage => "我同意保留變化幀的截圖，而不是只留上面的字。",
             Sheet::AzureTts => {
@@ -182,7 +186,7 @@ impl Sheet {
                 "沒有這一張，sister record 不會開始錄；錄到一半撤回，正在跑的 record 每 5 秒重讀同意書，最多再錄 5 秒加一拍；capture.min_interval_ms 超過 5 秒時，主要會等那一拍。"
             }
             Sheet::CloudReading => {
-                "沒有這一張，她不會把問題或本機記憶文字交給那支 CLI；你仍可在本機查看原始搜尋結果。正在跑的 sister watch 每看一次就重讀一次同意書，撤回之後它下一次看的時候就停下來，不會再問。"
+                "沒有這一張，她不會把問題、本機記憶文字或工作假設交給那支 CLI；背景解釋、審閱、監督與舊記憶重讀都不會呼叫它，你仍可在本機查看原始搜尋結果。正在跑的 sister watch 每看一次、其他工作每次外送前都會重讀同意書；撤回後不會再問，也不會開始新的呼叫。"
             }
             Sheet::FrameStorage => "沒有這一張，她只記螢幕上的字，不留截圖。",
             Sheet::AzureTts => "沒有這一張，她一次都不會呼叫 Azure 語音服務；本機朗讀不受影響。",
@@ -411,7 +415,7 @@ pub struct CloudAllowed(());
 /// Azure TTS 出境 marker；它只能從 [`AzureTtsAdmissionGuard::permit`] 借用，不能
 /// 複製到 guard 外重放。
 ///
-/// 它和 [`CloudAllowed`] 是不同型別：同意把 OCR 原文交給本機 CLI，
+/// 它和 [`CloudAllowed`] 是不同型別：同意把記憶文字交給本機 CLI，
 /// 不等於同意把當前答案送到 Microsoft Azure。
 #[derive(Debug)]
 pub struct AzureTtsAllowed(());
@@ -1003,6 +1007,37 @@ mod tests {
         assert!(consequence.contains("本機朗讀不受影響"));
     }
 
+    #[test]
+    fn cloud_wording_names_questions_background_history_and_the_exact_boundary() {
+        let wording = Sheet::CloudReading.wording();
+        for sent in [
+            "提問時",
+            "問題與查詢命中的文字",
+            "解釋、審閱、監督",
+            "錄製期間的背景理解",
+            "升級後一次重讀的較早紀錄",
+            "螢幕文字原文",
+            "程式抽出的事實",
+            "既有工作假設",
+            "CLI 方案額度",
+            "不會先遮掉",
+        ] {
+            assert!(wording.contains(sent), "missing {sent}: {wording}");
+        }
+        for not_sent in ["畫面檔", "資料庫路徑", "整份資料庫"] {
+            assert!(wording.contains(not_sent), "missing {not_sent}: {wording}");
+        }
+
+        let consequence = Sheet::CloudReading.without();
+        for stopped in ["背景解釋", "審閱", "監督", "舊記憶重讀"] {
+            assert!(
+                consequence.contains(stopped),
+                "missing {stopped}: {consequence}"
+            );
+        }
+        assert!(consequence.contains("撤回後不會再問，也不會開始新的呼叫"));
+    }
+
     /// 全新的機器上，她不准開始錄。
     ///
     /// 這是整個模組的理由。反過來那個版本——「還沒問過，那就先錄著」——
@@ -1097,6 +1132,17 @@ mod tests {
         assert!(!old.reviewed(Sheet::CloudReading));
         assert!(old.reviewed(Sheet::FrameStorage));
         assert!(!old.reviewed(Sheet::AzureTts));
+
+        let question_only_v1: Consent = toml::from_str(
+            "version = 3\nlocal_recording = 11\ncloud_reading = 12\ncloud_reading_terms_version = 1\ncloud_reading_reviewed_terms_version = 1\nframe_storage = 13\nazure_tts = 14\nazure_tts_terms_version = 1\nazure_tts_reviewed_terms_version = 1\n",
+        )
+        .expect("alpha.142 consent");
+        assert!(question_only_v1.allows_recording());
+        assert!(question_only_v1.allows_frames());
+        assert!(question_only_v1.allows_azure_tts());
+        assert!(question_only_v1.reviewed(Sheet::AzureTts));
+        assert!(!question_only_v1.reviewed(Sheet::CloudReading));
+        assert!(question_only_v1.cloud_permit().is_none());
     }
 
     #[test]

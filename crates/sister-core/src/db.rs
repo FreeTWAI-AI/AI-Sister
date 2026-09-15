@@ -1170,6 +1170,19 @@ pub struct Db {
     pub(crate) conn: Connection,
 }
 
+/// alpha.143 這一輪舊 L2 重讀的固定右界與下一個尚未掃過的位置。
+///
+/// 兩個值都落在 `meta`，所以程式重開不會從頭燒一次；key 帶版本，將來只有
+/// 解釋契約真的再換版時才會開另一輪。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct L2BackfillState {
+    pub cutoff: Millis,
+    pub cursor: Millis,
+}
+
+const L2_BACKFILL_V1_CUTOFF: &str = "l2_continuous_backfill_v1_cutoff";
+const L2_BACKFILL_V1_CURSOR: &str = "l2_continuous_backfill_v1_cursor";
+
 impl Db {
     /// 開啟（或建立）資料庫，套用 migration。
     pub fn open(path: &Path) -> Result<Self> {
@@ -1409,6 +1422,102 @@ impl Db {
                 .context("meta.created_at 不是 epoch 毫秒")
         })
         .transpose()
+    }
+
+    /// 第一次在同意書 2 有效時固定這輪舊記憶的右界。`INSERT OR IGNORE` 和兩筆
+    /// meta 在同一個 transaction：行程若剛好死在中間，下次不會拿新 cutoff 配
+    /// 舊 cursor，或把已跑過的範圍從頭再燒一次。
+    pub fn l2_backfill_v1_state(&mut self, initial_cutoff: Millis) -> Result<L2BackfillState> {
+        let tx = self
+            .conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        tx.execute(
+            "INSERT OR IGNORE INTO meta(key, value) VALUES(?1, ?2)",
+            params![L2_BACKFILL_V1_CUTOFF, initial_cutoff.to_string()],
+        )?;
+        let cutoff_raw: String = tx.query_row(
+            "SELECT value FROM meta WHERE key = ?1",
+            [L2_BACKFILL_V1_CUTOFF],
+            |row| row.get(0),
+        )?;
+        let cutoff = cutoff_raw
+            .parse::<Millis>()
+            .context("舊記憶重讀 cutoff 不是 epoch 毫秒")?;
+        let first_event: Option<Millis> = tx.query_row(
+            "SELECT MIN(ts) FROM (
+                 SELECT ts FROM focus_events WHERE ts < ?1
+                 UNION ALL SELECT ts FROM clipboard_events WHERE ts < ?1
+                 UNION ALL SELECT ts_start AS ts FROM input_metrics WHERE ts_start < ?1
+                 UNION ALL SELECT ts FROM system_events WHERE ts < ?1
+             )",
+            [cutoff],
+            |row| row.get(0),
+        )?;
+        let initial_cursor = first_event.unwrap_or(cutoff).min(cutoff);
+        tx.execute(
+            "INSERT OR IGNORE INTO meta(key, value) VALUES(?1, ?2)",
+            params![L2_BACKFILL_V1_CURSOR, initial_cursor.to_string()],
+        )?;
+        let cursor_raw: String = tx.query_row(
+            "SELECT value FROM meta WHERE key = ?1",
+            [L2_BACKFILL_V1_CURSOR],
+            |row| row.get(0),
+        )?;
+        let cursor = cursor_raw
+            .parse::<Millis>()
+            .context("舊記憶重讀 cursor 不是 epoch 毫秒")?;
+        anyhow::ensure!(
+            cursor <= cutoff,
+            "舊記憶重讀 cursor {cursor} 晚於固定 cutoff {cutoff}"
+        );
+        tx.commit()?;
+        Ok(L2BackfillState { cutoff, cursor })
+    }
+
+    /// 從 cursor 往後找下一筆真的會參與斷句的 L0；中間沒開機的日子直接跳過，
+    /// 不必每 50ms 重算一個空的六小時窗。
+    pub fn next_segment_event_at(&self, from_ts: Millis, to_ts: Millis) -> Result<Option<Millis>> {
+        if from_ts >= to_ts {
+            return Ok(None);
+        }
+        Ok(self.conn.query_row(
+            "SELECT MIN(ts) FROM (
+                 SELECT ts FROM focus_events WHERE ts >= ?1 AND ts < ?2
+                 UNION ALL SELECT ts FROM clipboard_events WHERE ts >= ?1 AND ts < ?2
+                 UNION ALL SELECT ts_start AS ts FROM input_metrics WHERE ts_start >= ?1 AND ts_start < ?2
+                 UNION ALL SELECT ts FROM system_events WHERE ts >= ?1 AND ts < ?2
+             )",
+            params![from_ts, to_ts],
+            |row| row.get(0),
+        )?)
+    }
+
+    /// 只准單調推進，而且用 expected cursor 防止另一條連線的較新進度被舊值蓋回
+    /// 去。這不是泛用 meta setter；回填只能改自己的具名 key。
+    pub fn advance_l2_backfill_v1(
+        &mut self,
+        expected_cursor: Millis,
+        next_cursor: Millis,
+        cutoff: Millis,
+    ) -> Result<()> {
+        anyhow::ensure!(
+            next_cursor >= expected_cursor && next_cursor <= cutoff,
+            "舊記憶重讀進度不是單調合法範圍：{expected_cursor} -> {next_cursor} / {cutoff}"
+        );
+        let changed = self.conn.execute(
+            "UPDATE meta SET value = ?1
+             WHERE key = ?2 AND value = ?3
+               AND (SELECT value FROM meta WHERE key = ?4) = ?5",
+            params![
+                next_cursor.to_string(),
+                L2_BACKFILL_V1_CURSOR,
+                expected_cursor.to_string(),
+                L2_BACKFILL_V1_CUTOFF,
+                cutoff.to_string(),
+            ],
+        )?;
+        anyhow::ensure!(changed == 1, "舊記憶重讀進度已由另一條連線改變");
+        Ok(())
     }
 
     /// SQLite 執行期版本（doctor 用，trigram 需要 ≥ 3.34）。
@@ -4330,11 +4439,11 @@ impl Db {
     const RETAINED_INTERPRETER_ATTEMPTS_SQL: &str = "SELECT COUNT(*),
                     (SELECT outcome FROM brain_outbound
                      WHERE segment_core_start >= ?1 AND segment_core_start < ?2
-                       AND role = 'interpreter'
+                       AND role IN ('interpreter', 'interpreter_history')
                      ORDER BY ts DESC, id DESC LIMIT 1)
              FROM brain_outbound
              WHERE segment_core_start >= ?1 AND segment_core_start < ?2
-               AND role = 'interpreter'";
+               AND role IN ('interpreter', 'interpreter_history')";
 
     /// 數這一段的**時間範圍裡**還留著的解釋層外送列，並讀最近一次的結局。
     ///
@@ -4357,7 +4466,7 @@ impl Db {
     ///   的段落上——**一列都沒少，數字照樣會變**。
     ///
     /// 舊資料若含不認得的 outcome，保留原始 token，仍算一次問過。
-    /// 審閱層與盯梢層的列不屬於這個問題。
+    /// 現場與歷史補讀都屬於解釋層；審閱層與盯梢層的列不屬於這個問題。
     pub fn retained_interpreter_attempts_for_segment(
         &self,
         core_started_at: Millis,
@@ -11994,6 +12103,7 @@ mod tests {
             (a, 3_000, "interpreter", "spawn_failed"),
             (b, 4_000, "interpreter", "success"),
             (b, 5_000, "interpreter", "no_answer"),
+            (b, 5_500, "interpreter_history", "bad_json"),
             (b, 6_000, "reviewer", "success"),
             (c, 7_000, "interpreter", "success"),
         ] {
@@ -12016,15 +12126,15 @@ mod tests {
         let got = db
             .retained_interpreter_attempts_for_segment(a, c)
             .expect("query")
-            .expect("five retained attempts");
+            .expect("six retained attempts");
         assert_eq!(
-            got.count, 5,
+            got.count, 6,
             "合併後左右兩半都要算，右界與 reviewer 都不能混入"
         );
         assert_eq!(
             got.latest_outcome,
-            crate::brain::StoredOutboundOutcome::Known(crate::brain::OutboundOutcome::NoAnswer),
-            "最近結局必須取範圍內較晚的右半"
+            crate::brain::StoredOutboundOutcome::Known(crate::brain::OutboundOutcome::BadJson),
+            "最近結局必須取範圍內較晚的歷史補讀"
         );
     }
 
@@ -13664,6 +13774,71 @@ mod tests {
             booting.beat,
             crate::heartbeat::Presence::Live(crate::heartbeat::Phase::Booting),
             "「有人佔著」和「她的列在不在」是兩題，兩個答案都要帶回去"
+        );
+    }
+
+    /// cutoff 與 cursor 是一組 durable checkpoint；重開或競爭寫入都不能讓它
+    /// 後退，壞值也不能被 `unwrap_or(0)` 冒充成「從頭開始」。
+    #[test]
+    fn l2_backfill_cutoff_is_fixed_and_cursor_only_moves_forward() {
+        let mut db = test_db();
+        db.conn
+            .execute(
+                "INSERT INTO focus_events(ts, kind, app_id) VALUES(?1, 'focus', 'code.exe')",
+                [1_000],
+            )
+            .expect("old event");
+        let initial = db.l2_backfill_v1_state(9_000).expect("initial state");
+        assert_eq!(
+            initial,
+            L2BackfillState {
+                cutoff: 9_000,
+                cursor: 1_000,
+            }
+        );
+        assert_eq!(
+            db.next_segment_event_at(1_001, 9_000).expect("next event"),
+            None,
+            "cursor 之後真的沒事件，不是回一個假的 0"
+        );
+        db.advance_l2_backfill_v1(1_000, 4_000, 9_000)
+            .expect("advance");
+        assert_eq!(
+            db.l2_backfill_v1_state(99_000).expect("reopen state"),
+            L2BackfillState {
+                cutoff: 9_000,
+                cursor: 4_000,
+            },
+            "重開時的新 now 不可以移動一次性 cutoff"
+        );
+        assert!(
+            db.advance_l2_backfill_v1(1_000, 2_000, 9_000).is_err(),
+            "舊 snapshot 不可以把已保存進度蓋回去"
+        );
+        assert_eq!(
+            db.l2_backfill_v1_state(99_000).expect("state after race"),
+            L2BackfillState {
+                cutoff: 9_000,
+                cursor: 4_000,
+            }
+        );
+    }
+
+    #[test]
+    fn malformed_l2_backfill_state_is_not_reinterpreted_as_zero() {
+        let mut db = test_db();
+        db.conn
+            .execute(
+                "INSERT INTO meta(key, value) VALUES(?1, 'not-a-time')",
+                [L2_BACKFILL_V1_CUTOFF],
+            )
+            .expect("broken state");
+        let error = db
+            .l2_backfill_v1_state(9_000)
+            .expect_err("壞掉的 timestamp 必須報錯");
+        assert!(
+            format!("{error:#}").contains("cutoff 不是 epoch 毫秒"),
+            "{error:#}"
         );
     }
 

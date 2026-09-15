@@ -217,6 +217,11 @@ CPU 仍然每場照實量；這個 Phase 0 例外不等於刪掉正式產品的�
   才重讀 DB 做下一段；因此後一段拿到的是前一段剛修正過的工作假設，不是同一批開始前的舊快照。
   有 backlog 時 50ms 後繼續下一段，不等十分鐘；某段壞 JSON、timeout 或 CLI 失敗時，這場先往後處理
   新證據，不在同一條 worker 裡立刻重試；之後的手動選段或落在 catch-up 範圍的新錄製才可再試，不讓一段吃掉整天預算。
+- alpha.143 升級後另開一輪固定右界的歷史補讀：從當時仍保留的最早 L0 開始，以六小時窗
+  順讀到這次錄製開始前五分鐘；每次只跑一段並把 cursor 落進 DB，程式重開就從下一段續跑。
+  現場段落永遠先走；每天最多用 20 次且不超過每日預算四分之一，不讓歷史補讀自己拿走更多。
+  沒有第二張同意不固定右界也不開始。純 Interpreter 舊卡會追加新版；Reviewer、使用者更正
+  與合併後 lineage 都保留，不拿一次升級回填覆寫人工或已審結論。
 - 每段先判斷新證據是支持、推翻還是補上上一張的結果；同一件事的 `activity` 要同時交代整體目標與本段進展。
   `continues.segment_ref` 只能指向這次實際給它看的上一張；任意舊段或懸空 ref 整張拒絕。沒有新證據時不反覆召回模型，
   因為空轉不是驗證。
@@ -299,7 +304,7 @@ ChatGPT 的三分類（否定事實/否定時機/接受）由 Reviewer 從對話
   兩組角色圖的來源、大小、SHA-256
   與 Apache-2.0 授權排除分開固定在 bundled manifest/NOTICE。17 位角色的日常聲音庫
   也隨 desktop 離線提供；每位基本包 8 句、擴充包 24 句，共 544 段 Ogg Opus。
-  同意書另有每位四張、共 68 段 bundled Ogg、4,542,053 bytes；逐段逐字稿必須等於 core 當下的
+  同意書另有每位四張、共 68 段 bundled Ogg、5,932,965 bytes；逐段逐字稿必須等於 core 當下的
   `Sheet::wording()`，不同就停用，不可用舊錄音念新條文。
   WebView 只從同源 bundled path 播放，CSP 的網路出口仍只有 IPC。
 - 狀態表達（不彈窗）：`idle`（呼吸）／`paused`（閉眼 = capture 停）／
@@ -482,17 +487,20 @@ feature 集合沒有 `download`；Azure 答案朗讀收在 `crates/sister-tts`�
 1. **本機記錄**：我同意在我的硬碟上記錄我的螢幕。這張只授權本機記錄，不授權
    上傳畫面或文字；不簽第二張時 S1 仍可完全離線運作。Persona 的選配素材下載是
    另一個當下揭露、當下按鈕，不藏在這張同意書裡。
-2. **上雲解讀**：我同意把在 AI-Sister 輸入的問題交給設定裡選定的 CLI，讓它決定
-   要查哪些本機記憶；AI-Sister 在本機執行，再把命中的螢幕文字原文、時間、app、
-   視窗標題與網址交回同一支 CLI 作答。永不送 pixel，原文不遮；沒簽就一次都不 spawn。
+2. **上雲解讀**：我同意讓設定裡選定的 CLI 解讀我的本機記憶。提問時會交出問題與
+   查詢命中的文字；解釋、審閱、監督與錄製期間的背景理解會自動交出選定片段，包括
+   升級後一次重讀的較早紀錄。內容可能包含螢幕文字原文、程式抽出的事實、既有工作假設、
+   時間、app、視窗標題與網址，也可能重複呼叫 CLI 並使用我的 CLI 方案額度。永不送出
+   畫面檔、資料庫路徑或整份資料庫；文字原文不遮。沒簽就一次都不 spawn。
 3. **畫面暫存**：我同意保留變化幀的截圖，而不是只留上面的字。沒簽仍可記 OCR，
    但一張截圖都不寫。
 4. **Azure TTS**：我同意在設定裡開啟 Azure 新答案自動朗讀時，每份新答案完成後不再逐次詢問，就把該答案正文原文交給我在設定裡選擇區域的 Microsoft Azure 語音服務並自動播放。正文可能含姓名、電話與金額，不會先遮罩；
    不會送出截圖、來源連結、memory id、整份資料庫或其他文字。沒有這一張，她一次都
    不會呼叫 Azure 語音服務；本機朗讀不受影響。
 
-四張各自獨立。第二張以獨立 terms version 讓 alpha.126 前只涵蓋既有候選成句的簽名失效，
-不撤回第一／第三張；第四張只鑄出 Azure TTS permit，不能借第二張、Persona 下載點擊或
+四張各自獨立。第二張以獨立 terms version 先讓 alpha.126 前只涵蓋既有候選成句的簽名失效；
+alpha.143 再因明列背景理解與一次舊記憶重讀，只讓 alpha.142 以前的第二張簽名失效，
+不撤回第一／第三／第四張。第四張只鑄出 Azure TTS permit，不能借第二張、Persona 下載點擊或
 Persona `voice_enabled` 代替。alpha.109 讀同版本、但尚無 Azure 欄位的舊 consent 時，
 前三張簽名保留，第四張明確遷移成未簽；alpha.110 再以第四張獨立 terms version 讓
 click-only 舊簽名失效，只需重簽第四張。未知／損壞／版本不符仍 fail closed。
@@ -546,8 +554,9 @@ alpha.103 保守丟棄這類 clipboard content，不拿下一拍的安全脈絡�
 看得到你螢幕上的字。這件事寫在第二張同意書的條文裡，他按的就是那句話
 （`consent.rs` `VERSION = 3`），不是寫在某份文件的第 11 節。
 
-沒有改變的：**畫面一粒 pixel 都不出去**；在 L2/L3 解釋路徑上只有 OCR 抽出來的字，
-沒簽第二張同意書一次都不送；剪貼簿秘密偵測（§11.2）仍然不落地。alpha.109 的
+沒有改變的：**畫面一粒 pixel 都不出去**；L2/L3、背景與一次歷史補讀只送選中的 OCR
+原文、程式 facts、既有工作假設與時間／app／title／URL metadata，沒簽第二張同意書
+一次都不送；剪貼簿秘密偵測（§11.2）仍然不落地。alpha.109 的
 Azure TTS 是 §11.10 另外一條只送當前答案正文的明示路徑，不借這張同意書。
 
 ### 11.4 保留與磁碟邊界
@@ -591,7 +600,7 @@ Azure TTS 的當前答案正文與一般網路 metadata 交給 Microsoft 後，�
 ### 11.8 資料主權（Rewind 的教訓：closed product 的退場 = 記憶滅絕）
 
 **開放資料格式**：SQLite schema 公開文件化、`sister export` 全量匯出。S1 記憶功能、
-17 套角色圖、544 段日常語音與 68 段（4,542,053 bytes）同意書朗讀不依賴我們的伺服器；它們都隨 desktop 安裝。舊 Persona
+17 套角色圖、544 段日常語音與 68 段（5,932,965 bytes）同意書朗讀不依賴我們的伺服器；它們都隨 desktop 安裝。舊 Persona
 素材 pack 的取得仍須使用者明確發起 CDN 下載。就算本專案或 CDN 消失，既有記憶仍可讀、
 匯出，bundled 與已驗本機素材也仍可用。
 素材 cache 固定在 `Config::default_data_dir()/persona-assets-v1`，不隨 `--data-dir`
@@ -881,7 +890,7 @@ AI-Sister 不提供、不保證這份免費額度，也不把它當費用上限�
 | Persona transport | root workspace 的 **`sister-assets`**；預設 feature 集合不含 `download`，desktop 才明確啟用 | API 不接受 renderer 傳入 URL／header／body／persona 或 memory；Persona 的 fixed GET 與 cache contract 見 §11.9 |
 | Azure TTS transport | root workspace 的 **`sister-tts`**；預設 feature 集合不含 `azure`，desktop 才明確啟用 | 預設關閉；第四張 consent、Credential Manager key 與 typed config 齊全時只自動讀最新新答案，另有 trusted replay；三個 fixed region POST、payload、cache 與 cancel 邊界見 §11.10 |
 | Schema | Rust serde DTO + 前端封閉集合檢查 | 沒有 Zod／codegen build step |
-| Persona assets | 17 人本機 catalog + bundled workplace 分層 rig（active-only decode）+ WebP fail-safe（ChatGPT 預設）+ 每人基本 8／擴充 24 的日常語音 + 每人四段同意書朗讀 | 402 張 selected PNG = 35,140,885 bytes；544 段日常 Ogg = 8,895,060 bytes，另有 68 段 consent Ogg（4,542,053 bytes）與 340 段 banter Ogg（2,249,872 bytes，alpha.132 起，唯一不必先被點到就會出聲的一包）；逐檔 pin text/path/bytes/hash/duration/rights/loudness（alpha.137 起每段帶 integrated LUFS 與 true peak，CI 重新解碼對回 manifest；alpha.138 起 CI 另量頭尾空白，每包至少 99% 兩端在 300 ms 以內；alpha.139 起台詞以外的音節一律重錄不剪，判準是兩個訓練資料不同的 ASR 都聽到台詞沒有的字；alpha.140 起換上去的那一段另要過一條相對判準——兩個引擎各自聽到的都不准比被換掉的那一段離台詞更遠——並拿掉兩條從隔壁 pack 搬來的絕對門檻（CER、聲紋分數））；WebView 只從同源 bundled path 播放；recorder/core 保持零網路 |
+| Persona assets | 17 人本機 catalog + bundled workplace 分層 rig（active-only decode）+ WebP fail-safe（ChatGPT 預設）+ 每人基本 8／擴充 24 的日常語音 + 每人四段同意書朗讀 | 402 張 selected PNG = 35,140,885 bytes；544 段日常 Ogg = 8,895,060 bytes，另有 68 段 consent Ogg（5,932,965 bytes）與 340 段 banter Ogg（2,249,872 bytes，alpha.132 起，唯一不必先被點到就會出聲的一包）；逐檔 pin text/path/bytes/hash/duration/rights/loudness（alpha.137 起每段帶 integrated LUFS 與 true peak，CI 重新解碼對回 manifest；alpha.138 起 CI 另量頭尾空白，每包至少 99% 兩端在 300 ms 以內；alpha.139 起台詞以外的音節一律重錄不剪，判準是兩個訓練資料不同的 ASR 都聽到台詞沒有的字；alpha.140 起換上去的那一段另要過一條相對判準——兩個引擎各自聽到的都不准比被換掉的那一段離台詞更遠——並拿掉兩條從隔壁 pack 搬來的絕對門檻（CER、聲紋分數））；WebView 只從同源 bundled path 播放；recorder/core 保持零網路 |
 | hands 元件（Phase 6+） | Agent S3（Apache-2.0）/ UFO²（MIT）/ OmniParser v3 weights（MIT，避開舊 AGPL detector） | 「手」已商品化：用組的，不自己寫 grounding |
 | 參考不引用 | Screenpipe（2026-06 起自訂商業授權，僅參考架構；MIT fork point 在舊版）；Everywhere（BUSL，僅 MCP/API interop） | license 判定見 research/landscape.md |
 

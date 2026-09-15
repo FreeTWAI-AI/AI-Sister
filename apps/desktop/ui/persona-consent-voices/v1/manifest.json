@@ -47,13 +47,13 @@
       "persona": "chatgpt",
       "group": "sister",
       "sheet": "cloud-reading",
-      "text": "我同意把我在 AI-Sister 輸入的問題交給設定裡選定的 CLI，讓它決定要查哪些本機記憶；AI-Sister 會在本機執行查詢，再把命中的螢幕文字原文、時間、app、視窗標題與網址交回同一支 CLI 作答。永不送出畫面檔；文字裡有什麼就送什麼，不會先遮掉。",
+      "text": "我同意讓設定裡選定的 CLI 解讀我的本機記憶。提問時會交出問題與查詢命中的文字；解釋、審閱、監督與錄製期間的背景理解會自動交出選定片段，包括升級後一次重讀的較早紀錄。內容可能包含螢幕文字原文、程式抽出的事實、既有工作假設、時間、app、視窗標題與網址，也可能重複呼叫 CLI 並使用我的 CLI 方案額度。永不送出畫面檔、資料庫路徑或整份資料庫；文字裡有什麼就送什麼，不會先遮掉。",
       "file": "chatgpt/cloud-reading.ogg",
-      "bytes": 96470,
-      "sha256": "316151be16a08d77980cf440e336503a9573c56ee52fec73aaaa790caba882e8",
-      "integratedLufs": -23.21,
-      "truePeakDbtp": -4.08,
-      "durationMs": 18904
+      "bytes": 176211,
+      "sha256": "8ab2305137364f1b6044f30150d25f7ed5229eea09308416bb1f738c4f4c5086",
+      "integratedLufs": -23.25,
+      "truePeakDbtp": -5.4,
+      "durationMs": 34714
     },
     {
       "persona": "chatgpt",
@@ -95,13 +95,13 @@
       "persona": "claude",
       "group": "sister",
       "sheet": "cloud-reading",
-      "text": "我同意把我在 AI-Sister 輸入的問題交給設定裡選定的 CLI，讓它決定要查哪些本機記憶；AI-Sister 會在本機執行查詢，再把命中的螢幕文字原文、時間、app、視窗標題與網址交回同一支 CLI 作答。永不送出畫面檔；文字裡有什麼就送什麼，不會先遮掉。",
+      "text": "我同意讓設定裡選定的 CLI 解讀我的本機記憶。提問時會交出問題與查詢命中的文字；解釋、審閱、監督與錄製期間的背景理解會自動交出選定片段，包括升級後一次重讀的較早紀錄。內容可能包含螢幕文字原文、程式抽出的事實、既有工作假設、時間、app、視窗標題與網址，也可能重複呼叫 CLI 並使用我的 CLI 方案額度。永不送出畫面檔、資料庫路徑或整份資料庫；文字裡有什麼就送什麼，不會先遮掉。",
       "file": "claude/cloud-reading.ogg",
-      "bytes": 104042,
-      "sha256": "1bd9e0f3962986e779946dfb5df2257d64b1646992b98a7161b5b398a49395c0",
-      "integratedLufs": -23.22,
-      "truePeakDbtp": -7.07,
-      "durationMs": 20515
+      "bytes": 205332,
+      "sha256": "95c129f9f65ddf32305ce447cc8519d3c8f71818aceba0ecdb1986e60f6fb1a7",
+      "integratedLufs": -23.19,
+      "truePeakDbtp": -5.58,
+      "durationMs": 40686
     },
     {
       "persona": "claude",
@@ -143,13 +143,13 @@
       "persona": "gemini",
       "group": "sister",
       "sheet": "cloud-reading",
-      "text": "我同意把我在 AI-Sister 輸入的問題交給設定裡選定的 CLI，讓它決定要查哪些本機記憶；AI-Sister 會在本機執行查詢，再把命中的螢幕文字原文、時間、app、視窗標題與網址交回同一支 CLI 作答。永不送出畫面檔；文字裡有什麼就送什麼，不會先遮掉。",
+      "text": "我同意讓設定裡選定的 CLI 解讀我的本機記憶。提問時會交出問題與查詢命中的文字；解釋、審閱、監督與錄製期間的背景理解會自動交出選定片段，包括升級後一次重讀的較早紀錄。內容可能包含螢幕文字原文、程式抽出的事實、既有工作假設、時間、app、視窗標題與網址，也可能重複呼叫 CLI 並使用我的 CLI 方案額度。永不送出畫面檔、資料庫路徑或整份資料庫；文字裡有什麼就送什麼，不會先遮掉。",
       "file": "gemini/cloud-reading.ogg",
-      "bytes": 92821,
-      "sha256": "c67d3a6a62115a9331b4be44a65b4cb721099572e6ef93ea2653a3a5e1932c74",
-      "integratedLufs": -23.2,
-      "truePeakDbtp": -1.65,
-      "durationMs": 18453
+      "bytes": 177438,
+      "sha256": "24a1e59e637560e61af2fad5acd3513267ef911e1d80279c19377409ad109207",
+      "integratedLufs": -23.17,
+      "truePeakDbtp": -2.24,
+      "durationMs": 35299
     },
     {
       "persona": "gemini",
@@ -191,13 +191,13 @@
       "persona": "grok",
       "group": "sister",
       "sheet": "cloud-reading",
-      "text": "我同意把我在 AI-Sister 輸入的問題交給設定裡選定的 CLI，讓它決定要查哪些本機記憶；AI-Sister 會在本機執行查詢，再把命中的螢幕文字原文、時間、app、視窗標題與網址交回同一支 CLI 作答。永不送出畫面檔；文字裡有什麼就送什麼，不會先遮掉。",
+      "text": "我同意讓設定裡選定的 CLI 解讀我的本機記憶。提問時會交出問題與查詢命中的文字；解釋、審閱、監督與錄製期間的背景理解會自動交出選定片段，包括升級後一次重讀的較早紀錄。內容可能包含螢幕文字原文、程式抽出的事實、既有工作假設、時間、app、視窗標題與網址，也可能重複呼叫 CLI 並使用我的 CLI 方案額度。永不送出畫面檔、資料庫路徑或整份資料庫；文字裡有什麼就送什麼，不會先遮掉。",
       "file": "grok/cloud-reading.ogg",
-      "bytes": 105849,
-      "sha256": "8146e5e4af01e68526743244a5e8f5c70774a0d79124e56983efe4852410afe8",
-      "integratedLufs": -23.36,
-      "truePeakDbtp": -1.11,
-      "durationMs": 20877
+      "bytes": 168876,
+      "sha256": "362d36ba08094a439c73e809e7ecb71326269399ec859d092391f144c26305e4",
+      "integratedLufs": -24.58,
+      "truePeakDbtp": -1.27,
+      "durationMs": 33363
     },
     {
       "persona": "grok",
@@ -239,13 +239,13 @@
       "persona": "deepseek",
       "group": "bestie",
       "sheet": "cloud-reading",
-      "text": "我同意把我在 AI-Sister 輸入的問題交給設定裡選定的 CLI，讓它決定要查哪些本機記憶；AI-Sister 會在本機執行查詢，再把命中的螢幕文字原文、時間、app、視窗標題與網址交回同一支 CLI 作答。永不送出畫面檔；文字裡有什麼就送什麼，不會先遮掉。",
+      "text": "我同意讓設定裡選定的 CLI 解讀我的本機記憶。提問時會交出問題與查詢命中的文字；解釋、審閱、監督與錄製期間的背景理解會自動交出選定片段，包括升級後一次重讀的較早紀錄。內容可能包含螢幕文字原文、程式抽出的事實、既有工作假設、時間、app、視窗標題與網址，也可能重複呼叫 CLI 並使用我的 CLI 方案額度。永不送出畫面檔、資料庫路徑或整份資料庫；文字裡有什麼就送什麼，不會先遮掉。",
       "file": "deepseek/cloud-reading.ogg",
-      "bytes": 102751,
-      "sha256": "174607b477d82f1f7aea6d519b3a815691b517f7d46eb29f8438252c888a8385",
-      "integratedLufs": -23.05,
-      "truePeakDbtp": -5.62,
-      "durationMs": 20258
+      "bytes": 172091,
+      "sha256": "2962637fae579949ee132c7870b6c532d0a9791b86d603398e063f0645e76c34",
+      "integratedLufs": -23.04,
+      "truePeakDbtp": -6.08,
+      "durationMs": 33873
     },
     {
       "persona": "deepseek",
@@ -287,13 +287,13 @@
       "persona": "qwen",
       "group": "bestie",
       "sheet": "cloud-reading",
-      "text": "我同意把我在 AI-Sister 輸入的問題交給設定裡選定的 CLI，讓它決定要查哪些本機記憶；AI-Sister 會在本機執行查詢，再把命中的螢幕文字原文、時間、app、視窗標題與網址交回同一支 CLI 作答。永不送出畫面檔；文字裡有什麼就送什麼，不會先遮掉。",
+      "text": "我同意讓設定裡選定的 CLI 解讀我的本機記憶。提問時會交出問題與查詢命中的文字；解釋、審閱、監督與錄製期間的背景理解會自動交出選定片段，包括升級後一次重讀的較早紀錄。內容可能包含螢幕文字原文、程式抽出的事實、既有工作假設、時間、app、視窗標題與網址，也可能重複呼叫 CLI 並使用我的 CLI 方案額度。永不送出畫面檔、資料庫路徑或整份資料庫；文字裡有什麼就送什麼，不會先遮掉。",
       "file": "qwen/cloud-reading.ogg",
-      "bytes": 96302,
-      "sha256": "ac532e72f79cf7bf75fa02b33c766aa04f05e5742bb855e6457742e78cc0b451",
-      "integratedLufs": -25.53,
-      "truePeakDbtp": -1.53,
-      "durationMs": 18879
+      "bytes": 189311,
+      "sha256": "07479bcd49f74abec9144bc810f44a9a1bb0de0f65e244921044cfad8f1b72b6",
+      "integratedLufs": -22.98,
+      "truePeakDbtp": -2.71,
+      "durationMs": 37376
     },
     {
       "persona": "qwen",
@@ -335,13 +335,13 @@
       "persona": "mistral",
       "group": "bestie",
       "sheet": "cloud-reading",
-      "text": "我同意把我在 AI-Sister 輸入的問題交給設定裡選定的 CLI，讓它決定要查哪些本機記憶；AI-Sister 會在本機執行查詢，再把命中的螢幕文字原文、時間、app、視窗標題與網址交回同一支 CLI 作答。永不送出畫面檔；文字裡有什麼就送什麼，不會先遮掉。",
+      "text": "我同意讓設定裡選定的 CLI 解讀我的本機記憶。提問時會交出問題與查詢命中的文字；解釋、審閱、監督與錄製期間的背景理解會自動交出選定片段，包括升級後一次重讀的較早紀錄。內容可能包含螢幕文字原文、程式抽出的事實、既有工作假設、時間、app、視窗標題與網址，也可能重複呼叫 CLI 並使用我的 CLI 方案額度。永不送出畫面檔、資料庫路徑或整份資料庫；文字裡有什麼就送什麼，不會先遮掉。",
       "file": "mistral/cloud-reading.ogg",
-      "bytes": 100303,
-      "sha256": "c721ac23c15bea2b6fdc3a08253c4f90e5852f3bed623ae044b97d1453ec2018",
-      "integratedLufs": -23.12,
-      "truePeakDbtp": -2.38,
-      "durationMs": 19763
+      "bytes": 206274,
+      "sha256": "b6dd0e1ad9ca14661359370d279f51d90f304c926bf23396ed6c3f4f7b06865a",
+      "integratedLufs": -23.09,
+      "truePeakDbtp": -2.76,
+      "durationMs": 40808
     },
     {
       "persona": "mistral",
@@ -383,13 +383,13 @@
       "persona": "venice",
       "group": "bestie",
       "sheet": "cloud-reading",
-      "text": "我同意把我在 AI-Sister 輸入的問題交給設定裡選定的 CLI，讓它決定要查哪些本機記憶；AI-Sister 會在本機執行查詢，再把命中的螢幕文字原文、時間、app、視窗標題與網址交回同一支 CLI 作答。永不送出畫面檔；文字裡有什麼就送什麼，不會先遮掉。",
+      "text": "我同意讓設定裡選定的 CLI 解讀我的本機記憶。提問時會交出問題與查詢命中的文字；解釋、審閱、監督與錄製期間的背景理解會自動交出選定片段，包括升級後一次重讀的較早紀錄。內容可能包含螢幕文字原文、程式抽出的事實、既有工作假設、時間、app、視窗標題與網址，也可能重複呼叫 CLI 並使用我的 CLI 方案額度。永不送出畫面檔、資料庫路徑或整份資料庫；文字裡有什麼就送什麼，不會先遮掉。",
       "file": "venice/cloud-reading.ogg",
-      "bytes": 103753,
-      "sha256": "fd2eb9173f679a5ec82b6e11d6ea4713be98c527f1afb72fdcfa6c310845fed0",
-      "integratedLufs": -23.08,
-      "truePeakDbtp": -3.86,
-      "durationMs": 22139
+      "bytes": 180521,
+      "sha256": "1637380790fa84e4107aa06dbd6e150bc16e011cffbeb7a2160f7517ff52211c",
+      "integratedLufs": -24.1,
+      "truePeakDbtp": -1.11,
+      "durationMs": 38144
     },
     {
       "persona": "venice",
@@ -431,13 +431,13 @@
       "persona": "sakana",
       "group": "bestie",
       "sheet": "cloud-reading",
-      "text": "我同意把我在 AI-Sister 輸入的問題交給設定裡選定的 CLI，讓它決定要查哪些本機記憶；AI-Sister 會在本機執行查詢，再把命中的螢幕文字原文、時間、app、視窗標題與網址交回同一支 CLI 作答。永不送出畫面檔；文字裡有什麼就送什麼，不會先遮掉。",
+      "text": "我同意讓設定裡選定的 CLI 解讀我的本機記憶。提問時會交出問題與查詢命中的文字；解釋、審閱、監督與錄製期間的背景理解會自動交出選定片段，包括升級後一次重讀的較早紀錄。內容可能包含螢幕文字原文、程式抽出的事實、既有工作假設、時間、app、視窗標題與網址，也可能重複呼叫 CLI 並使用我的 CLI 方案額度。永不送出畫面檔、資料庫路徑或整份資料庫；文字裡有什麼就送什麼，不會先遮掉。",
       "file": "sakana/cloud-reading.ogg",
-      "bytes": 120983,
-      "sha256": "1197eeedbf9e3fa91c8ff6f77557623b36df5be00362a1f50a148746fd857a9a",
-      "integratedLufs": -26.63,
-      "truePeakDbtp": -1.09,
-      "durationMs": 24557
+      "bytes": 229443,
+      "sha256": "b3746a5f1cefe4beea42c0e9fcd9864813b16c7ca68dd17d2569f75169af9f6a",
+      "integratedLufs": -24.91,
+      "truePeakDbtp": -1.03,
+      "durationMs": 45977
     },
     {
       "persona": "sakana",
@@ -479,13 +479,13 @@
       "persona": "perplexity",
       "group": "bestie",
       "sheet": "cloud-reading",
-      "text": "我同意把我在 AI-Sister 輸入的問題交給設定裡選定的 CLI，讓它決定要查哪些本機記憶；AI-Sister 會在本機執行查詢，再把命中的螢幕文字原文、時間、app、視窗標題與網址交回同一支 CLI 作答。永不送出畫面檔；文字裡有什麼就送什麼，不會先遮掉。",
+      "text": "我同意讓設定裡選定的 CLI 解讀我的本機記憶。提問時會交出問題與查詢命中的文字；解釋、審閱、監督與錄製期間的背景理解會自動交出選定片段，包括升級後一次重讀的較早紀錄。內容可能包含螢幕文字原文、程式抽出的事實、既有工作假設、時間、app、視窗標題與網址，也可能重複呼叫 CLI 並使用我的 CLI 方案額度。永不送出畫面檔、資料庫路徑或整份資料庫；文字裡有什麼就送什麼，不會先遮掉。",
       "file": "perplexity/cloud-reading.ogg",
-      "bytes": 88520,
-      "sha256": "bc9cff125099802ace5d4a55794601d879f9ce6ab363d901ee89a78395d52e1a",
-      "integratedLufs": -23.09,
-      "truePeakDbtp": -1.71,
-      "durationMs": 17829
+      "bytes": 166197,
+      "sha256": "5179e2212b5bbe64bc9813a3829b000972569fcc360e441bc57fd356579f294f",
+      "integratedLufs": -23.08,
+      "truePeakDbtp": -2.9,
+      "durationMs": 33989
     },
     {
       "persona": "perplexity",
@@ -527,13 +527,13 @@
       "persona": "glm",
       "group": "bestie",
       "sheet": "cloud-reading",
-      "text": "我同意把我在 AI-Sister 輸入的問題交給設定裡選定的 CLI，讓它決定要查哪些本機記憶；AI-Sister 會在本機執行查詢，再把命中的螢幕文字原文、時間、app、視窗標題與網址交回同一支 CLI 作答。永不送出畫面檔；文字裡有什麼就送什麼，不會先遮掉。",
+      "text": "我同意讓設定裡選定的 CLI 解讀我的本機記憶。提問時會交出問題與查詢命中的文字；解釋、審閱、監督與錄製期間的背景理解會自動交出選定片段，包括升級後一次重讀的較早紀錄。內容可能包含螢幕文字原文、程式抽出的事實、既有工作假設、時間、app、視窗標題與網址，也可能重複呼叫 CLI 並使用我的 CLI 方案額度。永不送出畫面檔、資料庫路徑或整份資料庫；文字裡有什麼就送什麼，不會先遮掉。",
       "file": "glm/cloud-reading.ogg",
-      "bytes": 110739,
-      "sha256": "45372c23400118d163607a6a2eb23f19df444ff114da7c2846b3463260548d8f",
-      "integratedLufs": -24.57,
-      "truePeakDbtp": -1.12,
-      "durationMs": 21978
+      "bytes": 177308,
+      "sha256": "5aff8dcb493a0b7b8fc0ea9669e1a007ce7e477b795e04f7715472f6ff115192",
+      "integratedLufs": -24.68,
+      "truePeakDbtp": -1.2,
+      "durationMs": 35383
     },
     {
       "persona": "glm",
@@ -575,13 +575,13 @@
       "persona": "kimi",
       "group": "bestie",
       "sheet": "cloud-reading",
-      "text": "我同意把我在 AI-Sister 輸入的問題交給設定裡選定的 CLI，讓它決定要查哪些本機記憶；AI-Sister 會在本機執行查詢，再把命中的螢幕文字原文、時間、app、視窗標題與網址交回同一支 CLI 作答。永不送出畫面檔；文字裡有什麼就送什麼，不會先遮掉。",
+      "text": "我同意讓設定裡選定的 CLI 解讀我的本機記憶。提問時會交出問題與查詢命中的文字；解釋、審閱、監督與錄製期間的背景理解會自動交出選定片段，包括升級後一次重讀的較早紀錄。內容可能包含螢幕文字原文、程式抽出的事實、既有工作假設、時間、app、視窗標題與網址，也可能重複呼叫 CLI 並使用我的 CLI 方案額度。永不送出畫面檔、資料庫路徑或整份資料庫；文字裡有什麼就送什麼，不會先遮掉。",
       "file": "kimi/cloud-reading.ogg",
-      "bytes": 112319,
-      "sha256": "1b05ec044db8be7c733f9a82433e9cf5a0caec4192acdfb40fa691a794cd3d2b",
-      "integratedLufs": -23.0,
-      "truePeakDbtp": -1.13,
-      "durationMs": 22297
+      "bytes": 196515,
+      "sha256": "ff682eb3c4b01f508c9cd9a06ca50e37566238082c6863802ce414c4797917f0",
+      "integratedLufs": -23.06,
+      "truePeakDbtp": -1.67,
+      "durationMs": 39130
     },
     {
       "persona": "kimi",
@@ -623,13 +623,13 @@
       "persona": "hunyuan",
       "group": "bestie",
       "sheet": "cloud-reading",
-      "text": "我同意把我在 AI-Sister 輸入的問題交給設定裡選定的 CLI，讓它決定要查哪些本機記憶；AI-Sister 會在本機執行查詢，再把命中的螢幕文字原文、時間、app、視窗標題與網址交回同一支 CLI 作答。永不送出畫面檔；文字裡有什麼就送什麼，不會先遮掉。",
+      "text": "我同意讓設定裡選定的 CLI 解讀我的本機記憶。提問時會交出問題與查詢命中的文字；解釋、審閱、監督與錄製期間的背景理解會自動交出選定片段，包括升級後一次重讀的較早紀錄。內容可能包含螢幕文字原文、程式抽出的事實、既有工作假設、時間、app、視窗標題與網址，也可能重複呼叫 CLI 並使用我的 CLI 方案額度。永不送出畫面檔、資料庫路徑或整份資料庫；文字裡有什麼就送什麼，不會先遮掉。",
       "file": "hunyuan/cloud-reading.ogg",
-      "bytes": 126397,
-      "sha256": "f7a03e532949ae4762e9c2fb5b8c3359b0c49ca1bf83df0122f60828df9c8b4f",
+      "bytes": 198474,
+      "sha256": "4cacd1606bb76aae0edff4c017787d2bb5c2174afd88f30742a5ad4b97139b7d",
       "integratedLufs": -23.0,
-      "truePeakDbtp": -4.29,
-      "durationMs": 24032
+      "truePeakDbtp": -2.69,
+      "durationMs": 38986
     },
     {
       "persona": "hunyuan",
@@ -671,13 +671,13 @@
       "persona": "minimax",
       "group": "bestie",
       "sheet": "cloud-reading",
-      "text": "我同意把我在 AI-Sister 輸入的問題交給設定裡選定的 CLI，讓它決定要查哪些本機記憶；AI-Sister 會在本機執行查詢，再把命中的螢幕文字原文、時間、app、視窗標題與網址交回同一支 CLI 作答。永不送出畫面檔；文字裡有什麼就送什麼，不會先遮掉。",
+      "text": "我同意讓設定裡選定的 CLI 解讀我的本機記憶。提問時會交出問題與查詢命中的文字；解釋、審閱、監督與錄製期間的背景理解會自動交出選定片段，包括升級後一次重讀的較早紀錄。內容可能包含螢幕文字原文、程式抽出的事實、既有工作假設、時間、app、視窗標題與網址，也可能重複呼叫 CLI 並使用我的 CLI 方案額度。永不送出畫面檔、資料庫路徑或整份資料庫；文字裡有什麼就送什麼，不會先遮掉。",
       "file": "minimax/cloud-reading.ogg",
-      "bytes": 114353,
-      "sha256": "6408837419e5e420814ff66b4441805c12debb6c80efbd12d59dc955d5bffc72",
-      "integratedLufs": -23.19,
-      "truePeakDbtp": -3.11,
-      "durationMs": 22737
+      "bytes": 196913,
+      "sha256": "289595fe4f08040a2fa92420588bcb819edd176a3f5377b185058bc478eedae6",
+      "integratedLufs": -25.51,
+      "truePeakDbtp": -1.27,
+      "durationMs": 39132
     },
     {
       "persona": "minimax",
@@ -719,13 +719,13 @@
       "persona": "nemotron",
       "group": "bestie",
       "sheet": "cloud-reading",
-      "text": "我同意把我在 AI-Sister 輸入的問題交給設定裡選定的 CLI，讓它決定要查哪些本機記憶；AI-Sister 會在本機執行查詢，再把命中的螢幕文字原文、時間、app、視窗標題與網址交回同一支 CLI 作答。永不送出畫面檔；文字裡有什麼就送什麼，不會先遮掉。",
+      "text": "我同意讓設定裡選定的 CLI 解讀我的本機記憶。提問時會交出問題與查詢命中的文字；解釋、審閱、監督與錄製期間的背景理解會自動交出選定片段，包括升級後一次重讀的較早紀錄。內容可能包含螢幕文字原文、程式抽出的事實、既有工作假設、時間、app、視窗標題與網址，也可能重複呼叫 CLI 並使用我的 CLI 方案額度。永不送出畫面檔、資料庫路徑或整份資料庫；文字裡有什麼就送什麼，不會先遮掉。",
       "file": "nemotron/cloud-reading.ogg",
-      "bytes": 128705,
-      "sha256": "6c1dd2c924b8034af93d3cebe19a1d55fbd3a5e8798918853a74f32ed3860f1c",
-      "integratedLufs": -23.01,
-      "truePeakDbtp": -4.6,
-      "durationMs": 25284
+      "bytes": 219439,
+      "sha256": "5e11c0813676da14c6636e06bf6f692b0d4ea152a9c4797796dc7f7665b22a55",
+      "integratedLufs": -23.0,
+      "truePeakDbtp": -4.79,
+      "durationMs": 43058
     },
     {
       "persona": "nemotron",
@@ -767,13 +767,13 @@
       "persona": "cohere",
       "group": "bestie",
       "sheet": "cloud-reading",
-      "text": "我同意把我在 AI-Sister 輸入的問題交給設定裡選定的 CLI，讓它決定要查哪些本機記憶；AI-Sister 會在本機執行查詢，再把命中的螢幕文字原文、時間、app、視窗標題與網址交回同一支 CLI 作答。永不送出畫面檔；文字裡有什麼就送什麼，不會先遮掉。",
+      "text": "我同意讓設定裡選定的 CLI 解讀我的本機記憶。提問時會交出問題與查詢命中的文字；解釋、審閱、監督與錄製期間的背景理解會自動交出選定片段，包括升級後一次重讀的較早紀錄。內容可能包含螢幕文字原文、程式抽出的事實、既有工作假設、時間、app、視窗標題與網址，也可能重複呼叫 CLI 並使用我的 CLI 方案額度。永不送出畫面檔、資料庫路徑或整份資料庫；文字裡有什麼就送什麼，不會先遮掉。",
       "file": "cohere/cloud-reading.ogg",
-      "bytes": 105785,
-      "sha256": "f68805ecf54243eea1e05f7cdb512dfd9821d8835a8dc22ed977cb1985c7c3d8",
-      "integratedLufs": -23.18,
-      "truePeakDbtp": -3.75,
-      "durationMs": 20852
+      "bytes": 166016,
+      "sha256": "ec64ae42b98b58c76f5376899de626dd60f1f44553025521039e11e53ca43285",
+      "integratedLufs": -23.15,
+      "truePeakDbtp": -2.59,
+      "durationMs": 32829
     },
     {
       "persona": "cohere",
@@ -815,13 +815,13 @@
       "persona": "mimo",
       "group": "bestie",
       "sheet": "cloud-reading",
-      "text": "我同意把我在 AI-Sister 輸入的問題交給設定裡選定的 CLI，讓它決定要查哪些本機記憶；AI-Sister 會在本機執行查詢，再把命中的螢幕文字原文、時間、app、視窗標題與網址交回同一支 CLI 作答。永不送出畫面檔；文字裡有什麼就送什麼，不會先遮掉。",
+      "text": "我同意讓設定裡選定的 CLI 解讀我的本機記憶。提問時會交出問題與查詢命中的文字；解釋、審閱、監督與錄製期間的背景理解會自動交出選定片段，包括升級後一次重讀的較早紀錄。內容可能包含螢幕文字原文、程式抽出的事實、既有工作假設、時間、app、視窗標題與網址，也可能重複呼叫 CLI 並使用我的 CLI 方案額度。永不送出畫面檔、資料庫路徑或整份資料庫；文字裡有什麼就送什麼，不會先遮掉。",
       "file": "mimo/cloud-reading.ogg",
-      "bytes": 119152,
-      "sha256": "10467a22c5be0555d6f3229084509ad879d5031cde490a4275b11307dfd84d10",
-      "integratedLufs": -23.08,
-      "truePeakDbtp": -2.02,
-      "durationMs": 23638
+      "bytes": 193797,
+      "sha256": "fef986e880b85e75bb8aa5a9e80e8c2234224aeb69cca53542f7fd232a73570d",
+      "integratedLufs": -23.07,
+      "truePeakDbtp": -5.59,
+      "durationMs": 38660
     },
     {
       "persona": "mimo",
@@ -852,7 +852,7 @@
     "personas": 17,
     "sheetsPerPersona": 4,
     "clips": 68,
-    "oggBytes": 4542053,
-    "durationMs": 899279
+    "oggBytes": 5932965,
+    "durationMs": 1177694
   }
 }

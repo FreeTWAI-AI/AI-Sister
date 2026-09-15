@@ -389,13 +389,18 @@ endpoint 發一個 POST。
 AI-Sister 在 SQLite 本機執行，再把命中的螢幕文字原文與出處交回同一支 CLI。CLI 不取得
 DB path、SQL、整份資料庫或畫面。外送紀錄在
 `brain_outbound`（結構與計數，不含原文；`role` 分答題查詢／答題成句／解釋層／審閱層／盯梢層——
-`answer_search`／`answer`／`interpreter`／`reviewer`／`watcher`，最後一個是 alpha.71 的 `sister watch`；
+`answer_search`／`answer`／`interpreter`／`interpreter_history`／`reviewer`／`watcher`；
+`interpreter_history` 讓每日舊記憶額度跨 recorder 重開仍可由既有稽核列精確計數，最後一個是 alpha.71 的 `sister watch`；
 送出去的是原文），假設卡片在 `l2_card`（append-only 版本鏈，`author` 是 interpreter／reviewer／user，刪 L0 時 tombstone 而不是實刪——列留著，
 卡片上的字清掉）。桌面時間軸的「外送」頁讀這兩張表和 `meta.ever_brain_outbound`。
 
-alpha.142 的背景理解排程只多兩個行程內狀態：這場已試過的最後一個 segment 起點，以及是否應在 50ms 後
-繼續下一段。兩者都只在 `sister-brain` thread RAM，不加 schema、不進 export，錄製收工就消失。真正完成的工作假設仍只寫既有
-`l2_card`，失敗仍只寫既有 `brain_outbound`；當前 segment 的 frame／fact 與上一張 activity 在 bounded CLI prompt 裡存活，不另存 prompt cache。
+alpha.142 的現場背景理解排程只多兩個行程內狀態：這場已試過的最後一個 segment 起點，以及是否應在 50ms 後
+繼續下一段。alpha.143 的一次性歷史補讀另在 `meta` 寫兩個整數字串：
+`l2_continuous_backfill_v1_cutoff` 是第一次在有效第二張同意下啟動時固定的右界，
+`l2_continuous_backfill_v1_cursor` 是下一個尚未掃過的位置；後者只單調往前，讓程式重開不重燒。
+它們不含原文、不增加資料表；完整 memory export 會和其餘 SQLite `meta` 一起備份這兩個 checkpoint。
+忘掉或 retention 刪除 L0 後，cursor 遇到空洞會跳到下一個仍存在的事件。真正完成的工作假設仍只寫既有 `l2_card`，失敗仍只寫既有
+`brain_outbound`；當前 segment 的 frame／fact 與上一張 activity 在 bounded CLI prompt 裡存活，不另存 prompt cache。
 
 alpha.126 的 S1 agent retrieval 不增加 schema 或永久資料。每一題先把問題交給當下選定的
 CLI，AI-Sister 再依其最多三條查詢從同一顆 SQLite 的 L1 facts、FTS hits 與鄰近 L2 選最多

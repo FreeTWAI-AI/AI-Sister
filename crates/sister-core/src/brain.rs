@@ -1183,6 +1183,26 @@ pub struct RanJob {
     pub previous: Option<crate::db::RetainedInterpreterAttempts>,
 }
 
+/// 已經有 L2 的章節怎麼處理。
+///
+/// 一般解釋與手動 `sister interpret` 都只補空缺。版本化的歷史回填才重讀舊
+/// Interpreter 卡；Reviewer 或使用者碰過的理解，以及後來合併到別的起點的章節，
+/// 都不自動改寫。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExistingL2 {
+    Keep,
+    RefreshInterpreter,
+}
+
+impl ExistingL2 {
+    fn outbound_role(self) -> &'static str {
+        match self {
+            Self::Keep => "interpreter",
+            Self::RefreshInterpreter => "interpreter_history",
+        }
+    }
+}
+
 pub struct InterpretInput<'a> {
     pub db: &'a mut Db,
     pub consent: &'a Consent,
@@ -1195,6 +1215,7 @@ pub struct InterpretInput<'a> {
     pub after_core_start: Option<Millis>,
     /// 指定某一段的 core_started_at。有的話跳過「值不值得」那一關。
     pub only_core_start: Option<Millis>,
+    pub existing_l2: ExistingL2,
 }
 
 pub fn prepare(input: &mut InterpretInput<'_>, data_dir: &Path) -> Result<DryRun> {
@@ -1356,7 +1377,7 @@ pub fn run(input: &mut InterpretInput<'_>, data_dir: &Path) -> Result<InterpretR
             outcome: kind.as_str(),
             duration_ms: spawn.duration_ms as i64,
             error: error.as_deref(),
-            role: "interpreter",
+            role: input.existing_l2.outbound_role(),
         })?;
         // 原始 admission 保留到 classify 與 outbound audit 都完成。stop-all 可能已經
         // 發佈 pending，但不能在一份實際送出的 audit 落地前回報成功。產品卡片則用
@@ -1518,13 +1539,22 @@ fn collect_jobs(input: &mut InterpretInput<'_>) -> Result<Vec<PreparedJob>> {
         {
             continue;
         }
-        if input
+        let mut refresh_existing = false;
+        if let Some(latest) = input
             .db
             .l2_versions_for_chapter(seg.core_started_at, seg.core_ended_at)?
             .last()
-            .is_some()
         {
-            continue;
+            match input.existing_l2 {
+                ExistingL2::Keep => continue,
+                ExistingL2::RefreshInterpreter
+                    if latest.author != crate::db::L2Author::Interpreter
+                        || latest.segment_core_start != seg.core_started_at =>
+                {
+                    continue;
+                }
+                ExistingL2::RefreshInterpreter => refresh_existing = true,
+            }
         }
         let facts = input
             .db
@@ -1537,6 +1567,7 @@ fn collect_jobs(input: &mut InterpretInput<'_>) -> Result<Vec<PreparedJob>> {
             .iter()
             .any(|s| s.started_at < seg.core_ended_at && s.ended_at > seg.core_started_at);
         if input.only_core_start.is_none()
+            && !refresh_existing
             && !worth_interpreting(&seg, &facts, large_clip, is_stuck)
         {
             continue;
@@ -2574,6 +2605,7 @@ mod tests {
                 limit: 1,
                 after_core_start: None,
                 only_core_start: Some(core),
+                existing_l2: ExistingL2::Keep,
             },
             &dir,
         )
@@ -2927,12 +2959,79 @@ mod tests {
             limit: 4,
             after_core_start: None,
             only_core_start: Some(left),
+            existing_l2: ExistingL2::Keep,
         })
         .expect("collect jobs");
         assert!(
             jobs.is_empty(),
             "右半已經有活卡的合併章節，不可以再花一次解釋預算"
         );
+
+        let refresh = collect_jobs(&mut InterpretInput {
+            db: &mut db,
+            consent: &consent,
+            brain: &brain,
+            from_ts: ts,
+            to_ts: ts + 540_000,
+            limit: 4,
+            after_core_start: None,
+            only_core_start: Some(left),
+            existing_l2: ExistingL2::RefreshInterpreter,
+        })
+        .expect("collect refresh jobs");
+        assert!(
+            refresh.is_empty(),
+            "使用者合併過的章節不自動把右半舊卡改寫到左半新 lineage"
+        );
+    }
+
+    #[test]
+    fn historical_refresh_revisits_only_an_exact_interpreter_lineage() {
+        let mut db = Db::open_in_memory().expect("db");
+        let ts = 1_700_000_055_000;
+        let fid = seed(&mut db, ts);
+        let chapters = db.chapters_for_range(ts, ts + 400_000).expect("chapters");
+        let segment = chapters.first().expect("segment");
+        let core = segment.core_started_at;
+        let segment_ref = segment_ref(core);
+        let insert = |db: &mut Db, author, activity: &str| {
+            db.insert_l2_card(&crate::db::L2Insert {
+                segment_core_start: core,
+                segment_ref: &segment_ref,
+                activity,
+                entities_json: "[]".into(),
+                continues_json: None,
+                commitments_json: "[]".into(),
+                model_confidence: 0.7,
+                evidence_json: format!(r#"["frame:{fid}"]"#),
+                open_questions_json: "[]".into(),
+                author,
+            })
+            .expect("insert card");
+        };
+        insert(&mut db, crate::db::L2Author::Interpreter, "舊片段");
+        let consent = Consent::default();
+        let brain = crate::config::BrainConfig::default();
+        let collect = |db: &mut Db| {
+            collect_jobs(&mut InterpretInput {
+                db,
+                consent: &consent,
+                brain: &brain,
+                from_ts: ts,
+                to_ts: ts + 400_000,
+                limit: 1,
+                after_core_start: None,
+                only_core_start: Some(core),
+                existing_l2: ExistingL2::RefreshInterpreter,
+            })
+            .expect("collect")
+        };
+        assert_eq!(collect(&mut db).len(), 1, "舊 Interpreter 卡要重讀");
+
+        insert(&mut db, crate::db::L2Author::Reviewer, "審閱後版本");
+        assert!(collect(&mut db).is_empty(), "Reviewer 卡不自動覆寫");
+        insert(&mut db, crate::db::L2Author::User, "使用者版本");
+        assert!(collect(&mut db).is_empty(), "使用者卡不自動覆寫");
     }
 
     #[test]
@@ -3008,6 +3107,7 @@ mod tests {
             limit: 1,
             after_core_start: None,
             only_core_start: None,
+            existing_l2: ExistingL2::Keep,
         })
         .expect("first job");
         assert_eq!(first_job.len(), 1);
@@ -3026,6 +3126,7 @@ mod tests {
             limit: 1,
             after_core_start: Some(first),
             only_core_start: None,
+            existing_l2: ExistingL2::Keep,
         })
         .expect("job after failed first");
         assert_eq!(after_failed_first.len(), 1);
@@ -3058,6 +3159,7 @@ mod tests {
             limit: 1,
             after_core_start: None,
             only_core_start: None,
+            existing_l2: ExistingL2::Keep,
         })
         .expect("second job");
         assert_eq!(second_job.len(), 1);
@@ -3165,6 +3267,7 @@ mod tests {
             limit: 4,
             after_core_start: None,
             only_core_start: None,
+            existing_l2: ExistingL2::Keep,
         };
         let result = run_for_test(&mut input).expect("run");
         assert!(matches!(result.skip, Some(SkipReason::NoConsent)));
@@ -3224,6 +3327,7 @@ mod tests {
             limit: 4,
             after_core_start: None,
             only_core_start: Some(core),
+            existing_l2: ExistingL2::Keep,
         };
         let result = run_for_test(&mut input).expect("run");
         assert!(result.skip.is_none(), "{:?}", result.skip);
@@ -3287,6 +3391,7 @@ mod tests {
             limit: 4,
             after_core_start: None,
             only_core_start: Some(core),
+            existing_l2: ExistingL2::Keep,
         })
         .expect("run");
 
@@ -3317,6 +3422,7 @@ mod tests {
             limit: 4,
             after_core_start: None,
             only_core_start: Some(core),
+            existing_l2: ExistingL2::Keep,
         })
         .expect("second run");
         assert_eq!(second.ran.len(), 1);
@@ -3351,6 +3457,7 @@ mod tests {
             limit: 4,
             after_core_start: None,
             only_core_start: Some(core),
+            existing_l2: ExistingL2::Keep,
         })
         .expect("run");
         assert_eq!(result.ran.len(), 1);
@@ -3393,6 +3500,7 @@ mod tests {
             limit: 4,
             after_core_start: None,
             only_core_start: None,
+            existing_l2: ExistingL2::Keep,
         };
         let stop_command = format!("sister --data-dir {} stop-all --off", dir.display());
         let before = format_dry_run_with_commands(
@@ -3442,6 +3550,7 @@ mod tests {
             limit: 4,
             after_core_start: None,
             only_core_start: None,
+            existing_l2: ExistingL2::Keep,
         };
         let report = prepare(&mut input, test_unstopped_data_dir()).expect("prepare");
         let text = format_dry_run(&report);

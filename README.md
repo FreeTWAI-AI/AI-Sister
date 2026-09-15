@@ -6,11 +6,11 @@
 > An open-source, local-first desktop companion: a filing cabinet that never
 > forgets, an event-driven brain that can admit it's wrong, and a desktop sister
 > who knows when to stay quiet. Screen pixels never leave your machine; after
-> explicit opt-in, your selected CLI directs local-memory searches and receives only the matching text. A
+> explicit opt-in, your selected CLI receives selected memory text for questions and background understanding. A
 > separate, default-off Azure TTS option can send only each newly completed
 > answer body after its own consent; manual replay sends it again. Local speech remains the default.
 
-**Status: v0.1.0-alpha.127**
+**Status: v0.1.0-alpha.143**
 
 AI-Sister 已完成本機記錄、OCR、L0–L3 記憶、本機 RAG、逐句可點出處，以及 Claude Code、
 Codex、Gemini CLI、Grok CLI 四種大腦登入。四姊妹與 13 位閨密共 17 位；角色圖、
@@ -19,7 +19,8 @@ workplace rig 與每人基本 8 句＋擴充 24 句語音都隨程式安裝。
 選好並登入 CLI、完成第二張同意後，**每個文字問題**都先由該 CLI 決定要查哪些記憶；
 AI-Sister 在本機執行最多三條查詢，再把命中的文字與出處交回同一支 CLI 作答。CLI 不會
 取得 SQLite 路徑或整份資料庫；沒有命中時也不會跳過 CLI。每句答案仍必須引用本輪真的
-找到的本機來源。
+找到的本機來源。錄製期間的背景理解也會按時間逐段驗證工作假設；alpha.143 升級後會從
+最早仍保留的舊紀錄開始分批補讀，進度跨重開保存，現在的活動永遠先處理。
 
 桌面主視窗是透明全身桌寵：角色大小不因答案出現而縮放，回答與可點證據收在指向角色的
 單一對話氣泡裡，沒有米白色整窗背景框。第一次開啟時，四張同意書也在這顆對話氣泡逐張
@@ -66,8 +67,8 @@ AI-Sister 仍會在本機記下這次問題。若 agent 正被 AI-Sister 當成 
   不會開始錄；錄到一半撤回，正在跑的 record 每 5 秒重讀同意書，最多再錄 5 秒加一拍；
   `capture.min_interval_ms` 超過 5 秒時，主要會等那一拍。沒簽時拒絕啟動、回非零；
   簽了才准在本機記錄。
-- `cloud-reading`：「我同意把我在 AI-Sister 輸入的問題交給設定裡選定的 CLI，讓它決定要查哪些本機記憶；AI-Sister 會在本機執行查詢，再把命中的螢幕文字原文、時間、app、視窗標題與網址交回同一支 CLI 作答。永不送出畫面檔；文字裡有什麼就送什麼，不會先遮掉。」
-  沒有這一張，問題與記憶文字都不會交給 CLI，仍可在本機查看原始搜尋結果。畫面永不離開這台機器；出去的是問題和命中的 OCR 文字與出處，**原文，不遮**。CLI 不會取得資料庫路徑、整份資料庫或 screenshot bytes。
+- `cloud-reading`：「我同意讓設定裡選定的 CLI 解讀我的本機記憶。提問時會交出問題與查詢命中的文字；解釋、審閱、監督與錄製期間的背景理解會自動交出選定片段，包括升級後一次重讀的較早紀錄。內容可能包含螢幕文字原文、程式抽出的事實、既有工作假設、時間、app、視窗標題與網址，也可能重複呼叫 CLI 並使用我的 CLI 方案額度。永不送出畫面檔、資料庫路徑或整份資料庫；文字裡有什麼就送什麼，不會先遮掉。」
+  沒有這一張，問題、本機記憶文字與工作假設都不會交給 CLI；背景解釋、審閱、監督與舊記憶重讀也不會呼叫它，仍可在本機查看原始搜尋結果。畫面永不離開這台機器；出去的是上述選定文字，**原文，不遮**。CLI 不會取得資料庫路徑、整份資料庫或 screenshot bytes。
 - `frame-storage`：「我同意保留變化幀的截圖，而不是只留上面的字。」沒簽不擋錄，
   她會當場說明降級，只記字、一張截圖都不寫；簽了才准依設定保留變化幀。
 - `azure-tts`：「我同意在設定裡開啟 Azure 新答案自動朗讀時，每份新答案完成後不再逐次詢問，就把該答案正文原文交給我在設定裡選擇區域的 Microsoft Azure 語音服務並自動播放。正文可能含姓名、電話與金額，不會先遮罩；
@@ -79,6 +80,8 @@ AI-Sister 仍會在本機記下這次問題。若 agent 正被 AI-Sister 當成 
 桌面主對話、設定裡的完整四張卡片與 `sister consent` 都從 core 取同一份條文與未簽後果；
 `sister doctor` 讀同一個檔案，另外報告目前是否簽署及會發生什麼事。回答「不同意」會保持
 功能關閉，但也會記住這張已問過；下次啟動不會反覆追問。條文改版時只重問真正變動的那張。
+alpha.143 擴大第二張條文以涵蓋背景理解與一次舊記憶重讀，因此舊的第二張簽名會失效並只
+重問這一張；第一、第三與第四張保持原狀。
 前三張共同條文改版會讓前三張舊簽名失效；第二張與第四張也各有自己的條文版本。檔案讀不到、
 損壞或版本不符一律 fail closed。alpha.109 以前沒有 Azure 欄位的舊檔保留前三張、
 第四張未簽；alpha.109 已簽的逐次點擊條文在 alpha.110 也會顯示為過期，只需重簽
@@ -245,7 +248,7 @@ Apache-2.0 程式碼授權；由 ChatGPT preview 衍生的五個應用程式圖�
 
 本機角色語音也隨 desktop 一起安裝：17 位角色各有基本包 8 句、擴充包 24 句，
 合計 **544 段 Ogg Opus、8,895,060 bytes**；另有每位四張、合計
-**68 段同意書朗讀、4,542,053 bytes**；再加每位 20 句、合計
+**68 段同意書朗讀、5,932,965 bytes**；再加每位 20 句、合計
 **340 段閒話短句、2,249,872 bytes**。
 輸入框送出的短句與一般問題一樣，全部交給已選 CLI 與本機記憶路徑，
 不用固定台詞繞過大腦或冒充動態答案；閒話也不進答案，它不算回答、不引用出處。

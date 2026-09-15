@@ -1211,6 +1211,7 @@ fn run_brain_for_eval(
             limit: 80,
             after_core_start: None,
             only_core_start: None,
+            existing_l2: brain::ExistingL2::Keep,
         };
         brain::run(&mut input, control_data_dir)?
     };

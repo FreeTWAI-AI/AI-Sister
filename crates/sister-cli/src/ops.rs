@@ -1535,12 +1535,12 @@ pub mod consent {
         if has_cli {
             &[
                 "螢幕上的原文會交給設定裡的那支 CLI，沒有去識別化。",
-                "會用這張同意書的是 `sister interpret`、`sister review`、`sister watch`；`sister watch` 會照著 --every 連續問很多次。",
+                "提問、`sister interpret`、`sister review`、`sister watch` 都會用這張同意書；`sister watch` 會照著 --every 連續問很多次。",
                 // 這一行是整段裡他最不可能自己想到的那一句，所以最不能省。
                 // 前三支要他自己打，`record` 不用——`sister record` 開著的時候
                 // 會自己起一條 wakeup 執行緒去叫解釋層和審閱層（`wakeup.rs`），
                 // 而 `record` 正好是唯一一支他會整天開著的。他以為那只是在錄。
-                "還有 `sister record`：只要設定檔有 [brain] command，它一邊錄就會一邊自己叫解釋層和審閱層，不用你再下任何指令。",
+                "還有 `sister record`：只要設定檔有 [brain] command，它一邊錄就會一邊自己叫解釋層和審閱層，也會按已保存的進度重讀較早紀錄，不用你再下任何指令。",
             ]
         } else {
             &["已同意，但還沒設定 [brain] command，一次都不會呼叫。"]
@@ -1894,6 +1894,7 @@ pub mod interpret {
             limit,
             after_core_start: None,
             only_core_start,
+            existing_l2: brain::ExistingL2::Keep,
         };
 
         if dry_run {

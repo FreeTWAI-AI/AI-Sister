@@ -16,7 +16,7 @@ use anyhow::{Context, Result};
 
 use crate::brain::{self, InterpretInput, OutboundOutcome, SkipReason as BrainSkip};
 use crate::config::{BrainConfig, Config};
-use crate::db::Db;
+use crate::db::{Db, L2BackfillState};
 use crate::heartbeat;
 use crate::local_day;
 use crate::model::Millis;
@@ -28,6 +28,11 @@ pub use crate::local_day::previous_local_day_key;
 /// 腦執行緒睡一小段再看旗標。這不是在輪詢資料庫，只是讓
 /// [`Handle::ping`]／收工能在幾十毫秒內被看到。
 const SLEEP_SLICE: Duration = Duration::from_millis(50);
+
+/// 舊記憶按六小時一窗掃；空白日會先用索引跳到下一筆斷句事件，不會逐窗空轉。
+const HISTORY_WINDOW_MS: Millis = 6 * 3_600_000;
+/// 預設 80 次額度時，每天至多拿 20 次給舊記憶；實際上限還會縮到設定額度的四分之一。
+const MAX_HISTORY_JOBS_PER_DAY: u32 = 20;
 
 /// 沒設定 CLI 時，執行緒根本不會起來。見 [`Handle::maybe_spawn`]。
 pub fn armed(brain: &BrainConfig) -> bool {
@@ -90,6 +95,9 @@ pub struct Report {
     pub interpreter_jobs: u32,
     /// 這一場實際跑到、之前已有保留外送列且這次仍沒寫成卡片的段落次數。
     pub interpreter_retried_without_card: u32,
+    /// 上面 interpreter_jobs/cards 裡有多少來自版本化的舊記憶重讀。
+    pub historical_jobs: u32,
+    pub historical_cards: u32,
     pub last_interpreter_skip: Option<String>,
     pub reviewer_interval_runs: u32,
     pub reviewer_eod_runs: u32,
@@ -109,6 +117,8 @@ impl Report {
             interpreter_nothing: 0,
             interpreter_jobs: 0,
             interpreter_retried_without_card: 0,
+            historical_jobs: 0,
+            historical_cards: 0,
             last_interpreter_skip: None,
             reviewer_interval_runs: 0,
             reviewer_eod_runs: 0,
@@ -163,6 +173,12 @@ pub fn format_report(r: &Report) -> String {
             out.push('\n');
             out.push_str(skip);
         }
+    }
+    if r.historical_jobs > 0 {
+        out.push_str(&format!(
+            "\n其中舊記憶重讀了 {} 段，寫進 {} 張新版假設；進度已保存。",
+            r.historical_jobs, r.historical_cards
+        ));
     }
     out.push('\n');
     if r.reviewer_interval_runs == 0 && r.reviewer_eod_runs == 0 {
@@ -405,7 +421,7 @@ fn worker(db_path: PathBuf, data_dir: PathBuf, shared: Arc<Shared>, started: Mil
     if let Err(e) = engine.catch_up(started) {
         engine.report.last_interpreter_skip = Some(format!("{e:#}"));
     }
-    let mut next_clock = Instant::now() + Duration::from_millis(next_wait_ms(started, None, None));
+    let mut next_clock = Instant::now() + Duration::from_millis(engine.next_wait(started));
     loop {
         if shared.stop.load(Ordering::Relaxed) {
             let now = crate::now_ms();
@@ -453,6 +469,10 @@ struct Engine {
     /// 還有可能沒想過的已關閉段落。背景下一拍立刻再看，但每次只讓一段完成並
     /// 落地，下一段才能把它當真正存在的上一張工作假設。
     interpret_again_soon: bool,
+    /// alpha.143 以前的紀錄還有一窗可掃；和現場 backlog 分開，Activity 不會
+    /// 把它清掉。真正的新活動永遠先走 `maybe_interpret`。
+    history_again_soon: bool,
+    history_state: Option<L2BackfillState>,
     recorded_no_consent: bool,
     budget_exhausted: bool,
     report: Report,
@@ -475,6 +495,8 @@ impl Engine {
             last_look_at: None,
             interpret_cursor: None,
             interpret_again_soon: false,
+            history_again_soon: false,
+            history_state: None,
             recorded_no_consent: false,
             budget_exhausted: false,
         })
@@ -491,7 +513,7 @@ impl Engine {
         if !armed(&self.brain) {
             return TIME_CAP_MS as u64;
         }
-        if self.interpret_again_soon {
+        if self.interpret_again_soon || self.history_again_soon {
             return SLEEP_SLICE.as_millis() as u64;
         }
         next_wait_ms(now, self.last_review_at, self.last_look_at)
@@ -502,10 +524,13 @@ impl Engine {
             return Ok(());
         }
         self.maybe_eod(now, false)?;
-        // 上一場收工時沒想完的最後一段：session 已結束，那些章節已關閉。
-        // LOOKAROUND_MS 之內再開始錄，這裡會補上；更久以前的那一筆 Timeout
-        // 還留在外送紀錄裡，只是這一次看不到。
-        self.maybe_interpret(now, false)
+        // 先處理眼前五分鐘；沒有現場段落真的送出，才拿一格給舊記憶。
+        let before = self.report.interpreter_jobs;
+        self.maybe_interpret(now, false)?;
+        if self.report.interpreter_jobs == before {
+            self.maybe_history(now)?;
+        }
+        Ok(())
     }
 
     fn step(&mut self, now: Millis, kind: Step) -> Result<()> {
@@ -522,8 +547,16 @@ impl Engine {
             self.budget_exhausted = false;
         }
         match kind {
-            Step::Activity | Step::Clock => {
+            Step::Activity => {
                 self.maybe_interpret(now, false)?;
+                self.maybe_interval(now)?;
+            }
+            Step::Clock => {
+                let before = self.report.interpreter_jobs;
+                self.maybe_interpret(now, false)?;
+                if self.report.interpreter_jobs == before {
+                    self.maybe_history(now)?;
+                }
                 self.maybe_interval(now)?;
             }
             Step::Shutdown => {
@@ -594,6 +627,17 @@ impl Engine {
         if self.budget_exhausted {
             return Ok(());
         }
+        // Engine 出生時可能先有現場 backlog，歷史 state 尚未初始化。Activity
+        // 就算剛好把現場旗標清空，也要留下這一拍，讓 worker 接著固定舊資料 cutoff。
+        // 額度耗盡時不能再留旗標，否則會每 50ms 空醒一次直到跨日。
+        //
+        // 分不到額度的機器（`daily_budget < 4`，`history_daily_limit()` 是 0）
+        // 永遠不會走到固定 cutoff 那一步，所以那一拍等的是一件不會發生的事。
+        // 條件要和 `maybe_history` 自己那道閘門同一句，不然每次 Activity 都白付
+        // 一趟 consent 讀檔加一次 `chapters_for_range`。
+        if self.history_state.is_none() && self.history_daily_limit() > 0 {
+            self.history_again_soon = true;
+        }
 
         let from = self.session_started_at.saturating_sub(LOOKAROUND_MS);
         let segs = self.db.chapters_for_range(from, now)?;
@@ -633,6 +677,7 @@ impl Engine {
             limit: 1,
             after_core_start,
             only_core_start,
+            existing_l2: brain::ExistingL2::Keep,
         };
         let dry = brain::prepare(&mut input, &self.data_dir)?;
         match &dry.skip {
@@ -718,6 +763,142 @@ impl Engine {
                 Ok(())
             }
         }
+    }
+
+    fn history_daily_limit(&self) -> u32 {
+        MAX_HISTORY_JOBS_PER_DAY.min(self.brain.daily_budget / 4)
+    }
+
+    /// 由最早的 retained L0 往固定 cutoff 順讀。一次只跑一段，讓下一段真的能
+    /// 讀到上一段剛落地的新假設；失敗也推進，避免一個壞 JSON 每 50ms 吃光額度。
+    fn maybe_history(&mut self, _now: Millis) -> Result<()> {
+        self.history_again_soon = false;
+        let history_limit = self.history_daily_limit();
+        if self.budget_exhausted || history_limit == 0 {
+            return Ok(());
+        }
+        let consent = crate::consent::load(&self.data_dir);
+        if consent.cloud_permit().is_none() {
+            return Ok(());
+        }
+
+        let mut state = match self.history_state {
+            Some(state) => state,
+            None => {
+                let state = self
+                    .db
+                    .l2_backfill_v1_state(self.session_started_at.saturating_sub(LOOKAROUND_MS))?;
+                self.history_state = Some(state);
+                state
+            }
+        };
+        if state.cursor >= state.cutoff {
+            return Ok(());
+        }
+        let day = brain::local_day_key(crate::now_ms()).context("算不出今天的日期")?;
+        let history_used = self
+            .db
+            .brain_outbound_count_on_role(&day, "interpreter_history")?;
+        if history_used >= history_limit {
+            return Ok(());
+        }
+
+        let Some(next_event) = self.db.next_segment_event_at(state.cursor, state.cutoff)? else {
+            self.db
+                .advance_l2_backfill_v1(state.cursor, state.cutoff, state.cutoff)?;
+            state.cursor = state.cutoff;
+            self.history_state = Some(state);
+            return Ok(());
+        };
+        let from = next_event.saturating_sub(LOOKAROUND_MS).max(state.cursor);
+        let to = next_event
+            .saturating_add(HISTORY_WINDOW_MS)
+            .min(state.cutoff);
+        if from >= to {
+            self.db
+                .advance_l2_backfill_v1(state.cursor, state.cutoff, state.cutoff)?;
+            state.cursor = state.cutoff;
+            self.history_state = Some(state);
+            return Ok(());
+        }
+
+        let mut input = InterpretInput {
+            db: &mut self.db,
+            consent: &consent,
+            brain: &self.brain,
+            from_ts: from,
+            to_ts: to,
+            limit: 1,
+            after_core_start: None,
+            only_core_start: None,
+            existing_l2: brain::ExistingL2::RefreshInterpreter,
+        };
+        let dry = brain::prepare(&mut input, &self.data_dir)?;
+        match &dry.skip {
+            Some(BrainSkip::NoCommand) => {
+                self.report.armed = false;
+            }
+            Some(BrainSkip::NoConsent) => {}
+            Some(BrainSkip::MasterStopped) => {
+                self.report.last_interpreter_skip = dry.skip.map(|s| s.message());
+            }
+            Some(BrainSkip::BudgetExhausted { .. }) => {
+                let result = brain::run(&mut input, &self.data_dir)?;
+                self.budget_exhausted = true;
+                self.report.last_interpreter_skip = result.skip.map(|s| s.message());
+            }
+            Some(BrainSkip::NothingWorthInterpreting { .. }) => {
+                self.db
+                    .advance_l2_backfill_v1(state.cursor, to, state.cutoff)?;
+                state.cursor = to;
+                self.history_state = Some(state);
+                self.history_again_soon = state.cursor < state.cutoff;
+            }
+            None => {
+                let Some(job) = dry.jobs.first() else {
+                    self.db
+                        .advance_l2_backfill_v1(state.cursor, to, state.cutoff)?;
+                    state.cursor = to;
+                    self.history_state = Some(state);
+                    self.history_again_soon = state.cursor < state.cutoff;
+                    return Ok(());
+                };
+                let attempted_core = job.core_started_at;
+                self.report.interpreter_wakes += 1;
+                let result = brain::run(&mut input, &self.data_dir)?;
+                let ran = result.ran.len() as u32;
+                let cards = result.ran.iter().filter(|job| job.card.is_some()).count() as u32;
+                self.report.interpreter_jobs += ran;
+                self.report.interpreter_cards += cards;
+                self.report.historical_jobs += ran;
+                self.report.historical_cards += cards;
+                self.report.interpreter_retried_without_card += result
+                    .ran
+                    .iter()
+                    .filter(|job| job.previous.is_some() && !job.outcome.wrote_card())
+                    .count() as u32;
+                if !result.ran.is_empty() {
+                    let next = attempted_core.saturating_add(1).min(state.cutoff);
+                    self.db
+                        .advance_l2_backfill_v1(state.cursor, next, state.cutoff)?;
+                    state.cursor = next;
+                    self.history_state = Some(state);
+                }
+                match result.skip {
+                    Some(BrainSkip::BudgetExhausted { .. }) => {
+                        self.budget_exhausted = true;
+                        self.report.last_interpreter_skip = result.skip.map(|s| s.message());
+                    }
+                    Some(s) => self.report.last_interpreter_skip = Some(s.message()),
+                    None => {}
+                }
+                self.history_again_soon = !result.ran.is_empty()
+                    && !self.budget_exhausted
+                    && state.cursor < state.cutoff
+                    && history_used.saturating_add(ran) < history_limit;
+            }
+        }
+        Ok(())
     }
 
     fn run_review(&mut self, now: Millis, kind: ReviewKind) -> Result<()> {
@@ -1092,6 +1273,7 @@ sys.stdout.buffer.write(json.dumps(card).encode('utf-8'))
             "{without}"
         );
         assert!(!without.contains("之前問過"), "{without}");
+        assert!(!without.contains("舊記憶重讀"), "{without}");
         assert_eq!(
             without.lines().next(),
             Some("解釋層自己醒了 3 次，跑了 12 次，寫進 0 張假設。"),
@@ -1108,6 +1290,23 @@ sys.stdout.buffer.write(json.dumps(card).encode('utf-8'))
         assert!(
             with.contains("其中 8 次是之前問過、這一次又沒寫成卡片。"),
             "{with}"
+        );
+        let historical = format_report(&Report {
+            armed: true,
+            interpreter_wakes: 2,
+            interpreter_jobs: 2,
+            interpreter_cards: 1,
+            historical_jobs: 2,
+            historical_cards: 1,
+            ..Report::unarmed()
+        });
+        assert!(
+            historical.contains("舊記憶重讀了 2 段，寫進 1 張新版假設；進度已保存。"),
+            "{historical}"
+        );
+        assert!(
+            !historical.contains("全部完成"),
+            "本場非零量不能冒充整輪完成：{historical}"
         );
         println!("沒有重問：\n{without}\n---\n有重問：\n{with}");
     }
@@ -1315,6 +1514,359 @@ sys.stdout.buffer.write(json.dumps(card).encode('utf-8'))
         assert_eq!(engine.report.interpreter_jobs, 2);
         assert_eq!(engine.report.interpreter_cards, 2);
         assert!(sentinel.exists());
+    }
+
+    #[test]
+    fn old_interpreter_cards_are_refreshed_once_and_restart_resumes_after_them() {
+        let tmp = Tmp::new("history-resume");
+        grant_cloud(&tmp.0);
+        let old = 1_700_000_425_000;
+        let now = old + 2 * 86_400_000;
+        let mut db = Db::open(&Config::db_path(&tmp.0)).expect("db");
+        seed_worth(&mut db, old);
+        let segments = db.chapters_for_range(old, old + 400_000).expect("segments");
+        assert!(segments.len() >= 2, "要有前後兩段：{segments:?}");
+        let first = segments[0].core_started_at;
+        let second = segments[1].core_started_at;
+        db.insert_l2_card(&L2Insert {
+            segment_core_start: first,
+            segment_ref: &format!("segment:{first}"),
+            activity: "OLD_FRAGMENT",
+            entities_json: "[]".into(),
+            continues_json: None,
+            commitments_json: "[]".into(),
+            model_confidence: 0.4,
+            evidence_json: "[]".into(),
+            open_questions_json: "[]".into(),
+            author: L2Author::Interpreter,
+        })
+        .expect("old card");
+        let sentinel = tmp.0.join("history-started");
+        let (command, args) = chaining_fake_cli(&tmp.0, &sentinel);
+        let brain = BrainConfig {
+            command,
+            args,
+            ..Default::default()
+        };
+
+        {
+            let mut engine = Engine::new(db, tmp.0.clone(), brain.clone(), now).expect("engine");
+            engine.catch_up(now).expect("first catch-up");
+            let versions = engine
+                .db
+                .l2_versions_for_segment(first)
+                .expect("first versions");
+            assert_eq!(versions.len(), 2, "舊 Interpreter 卡要追加新版，不刪原版");
+            assert_eq!(versions.last().expect("latest").activity, "CHAIN_FIRST");
+            assert_eq!(engine.report.historical_jobs, 1);
+            assert_eq!(engine.report.historical_cards, 1);
+        }
+
+        let db = Db::open(&Config::db_path(&tmp.0)).expect("reopen");
+        let mut engine = Engine::new(db, tmp.0.clone(), brain, now + 1).expect("engine 2");
+        engine.catch_up(now + 1).expect("resume catch-up");
+        assert_eq!(
+            engine
+                .db
+                .l2_versions_for_segment(first)
+                .expect("first versions after restart")
+                .len(),
+            2,
+            "重開不能把第一段再燒一次"
+        );
+        let second_card = engine
+            .db
+            .latest_l2_for_segment(second)
+            .expect("second read")
+            .expect("second card");
+        assert_eq!(
+            second_card.activity, "CHAIN_SECOND_SAW_FIRST",
+            "接續回填必須讀到前一場剛存下來的新版假設"
+        );
+        assert_eq!(engine.report.historical_jobs, 1);
+        assert!(sentinel.exists());
+    }
+
+    #[test]
+    fn historical_backfill_uses_at_most_one_quarter_of_the_daily_budget() {
+        let tmp = Tmp::new("history-session-cap");
+        grant_cloud(&tmp.0);
+        let old = 1_700_000_000_000;
+        let now = old + 2 * 86_400_000;
+        let mut db = Db::open(&Config::db_path(&tmp.0)).expect("db");
+        seed_worth(&mut db, old);
+        let segments = db.chapters_for_range(old, old + 400_000).expect("segments");
+        assert!(segments.len() >= 2, "要有兩段舊資料：{segments:?}");
+        let first = segments[0].core_started_at;
+        let second = segments[1].core_started_at;
+        let sentinel = tmp.0.join("history-capped");
+        let (command, args) = chaining_fake_cli(&tmp.0, &sentinel);
+        let brain = BrainConfig {
+            command,
+            args,
+            daily_budget: 4,
+            ..Default::default()
+        };
+        let mut engine = Engine::new(db, tmp.0.clone(), brain.clone(), now).expect("engine");
+        engine.catch_up(now).expect("first historical job");
+        assert_eq!(engine.history_daily_limit(), 1);
+        assert_eq!(engine.report.historical_jobs, 1);
+        assert!(
+            engine
+                .db
+                .latest_l2_for_segment(first)
+                .expect("first read")
+                .is_some(),
+            "第一段可以用今天分給舊資料的一格"
+        );
+        drop(engine);
+
+        let db = Db::open(&Config::db_path(&tmp.0)).expect("reopen db");
+        let mut restarted = Engine::new(db, tmp.0.clone(), brain, now + 1).expect("restart");
+        restarted
+            .catch_up(now + 1)
+            .expect("daily cap must survive restart");
+        assert_eq!(
+            restarted.report.historical_jobs, 0,
+            "同一天重開不能重新取得另一份四分之一額度"
+        );
+        assert!(
+            restarted
+                .db
+                .latest_l2_for_segment(second)
+                .expect("second read")
+                .is_none(),
+            "第二段要留到明天，重開也不能侵占保留給現場的額度"
+        );
+    }
+
+    #[test]
+    fn live_activity_goes_before_a_pending_historical_backfill() {
+        let tmp = Tmp::new("history-live-first");
+        grant_cloud(&tmp.0);
+        let old = 1_700_000_000_000;
+        let live = old + 3 * 86_400_000;
+        let mut db = Db::open(&Config::db_path(&tmp.0)).expect("db");
+        seed_worth(&mut db, old);
+        let live_fid = seed_worth(&mut db, live);
+        let live_segments = db
+            .chapters_for_range(live, live + 400_000)
+            .expect("live segments");
+        let live_core = live_segments[0].core_started_at;
+        let old_core = db
+            .chapters_for_range(old, old + 400_000)
+            .expect("old segments")[0]
+            .core_started_at;
+        let json = format!(
+            r#"{{"segment_ref":"segment:{live_core}","activity":"LIVE_FIRST","entities":[],"confidence":0.7,"evidence_refs":["frame:{live_fid}"],"open_questions":[]}}"#
+        );
+        let sentinel = tmp.0.join("live-started");
+        let (command, args) = fake_cli(&tmp.0, &json, &sentinel, 0);
+        let mut engine = Engine::new(
+            db,
+            tmp.0.clone(),
+            BrainConfig {
+                command,
+                args,
+                ..Default::default()
+            },
+            live,
+        )
+        .expect("engine");
+        engine.history_again_soon = true;
+        engine
+            .step(live + 201_000, Step::Activity)
+            .expect("activity");
+        assert_eq!(engine.report.interpreter_jobs, 1);
+        assert_eq!(engine.report.historical_jobs, 0, "Activity 這拍不跑舊資料");
+        assert!(
+            engine
+                .db
+                .latest_l2_for_segment(old_core)
+                .expect("old read")
+                .is_none(),
+            "有現場活動時不該先處理幾天前"
+        );
+        assert!(engine.history_again_soon, "舊資料下一個 clock 仍要接著跑");
+        assert_eq!(
+            engine.next_wait(live + 201_000),
+            SLEEP_SLICE.as_millis() as u64
+        );
+    }
+
+    /// 定時那一拍是現場與舊資料唯一會撞在一起的地方，而 `Step::Activity`
+    /// 那條路根本不叫 `maybe_history`——所以「現場先做」這句話只有在
+    /// `Step::Clock` 上才證得出來。有現場段落可做的時候，這一拍不可以分給舊資料。
+    #[test]
+    fn a_clock_tick_with_live_work_does_not_spend_itself_on_history() {
+        let tmp = Tmp::new("history-clock-live");
+        grant_cloud(&tmp.0);
+        let old = 1_700_000_000_000;
+        let live = old + 3 * 86_400_000;
+        let mut db = Db::open(&Config::db_path(&tmp.0)).expect("db");
+        seed_worth(&mut db, old);
+        let live_fid = seed_worth(&mut db, live);
+        let live_core = db
+            .chapters_for_range(live, live + 400_000)
+            .expect("live segments")[0]
+            .core_started_at;
+        let old_core = db
+            .chapters_for_range(old, old + 400_000)
+            .expect("old segments")[0]
+            .core_started_at;
+        let json = format!(
+            r#"{{"segment_ref":"segment:{live_core}","activity":"LIVE_ON_THE_CLOCK","entities":[],"confidence":0.7,"evidence_refs":["frame:{live_fid}"],"open_questions":[]}}"#
+        );
+        let sentinel = tmp.0.join("clock-live-started");
+        let (command, args) = fake_cli(&tmp.0, &json, &sentinel, 0);
+        let mut engine = Engine::new(
+            db,
+            tmp.0.clone(),
+            BrainConfig {
+                command,
+                args,
+                ..Default::default()
+            },
+            live,
+        )
+        .expect("engine");
+        engine.step(live + 201_000, Step::Clock).expect("clock");
+        assert_eq!(
+            engine.report.interpreter_jobs, 1,
+            "現場那一段要在這一拍做掉"
+        );
+        assert_eq!(
+            engine.report.historical_jobs, 0,
+            "同一拍不可以再分一格給舊資料"
+        );
+        assert!(
+            engine
+                .db
+                .latest_l2_for_segment(old_core)
+                .expect("old read")
+                .is_none(),
+            "幾天前那一段不該搶在現場前面"
+        );
+    }
+
+    /// 反過來那一半：沒有現場段落可做的定時拍，就是舊資料真正前進的地方。
+    /// 少了這一條，把 `maybe_history` 整個從 `Step::Clock` 拿掉也全綠——
+    /// 補讀會只在開錄那一刻跑一次，之後整場再也不動。
+    #[test]
+    fn a_clock_tick_with_nothing_live_is_where_history_moves() {
+        let tmp = Tmp::new("history-clock-idle");
+        grant_cloud(&tmp.0);
+        let old = 1_700_000_000_000;
+        let now = old + 2 * 86_400_000;
+        let mut db = Db::open(&Config::db_path(&tmp.0)).expect("db");
+        seed_worth(&mut db, old);
+        let old_core = db
+            .chapters_for_range(old, old + 400_000)
+            .expect("old segments")[0]
+            .core_started_at;
+        let sentinel = tmp.0.join("clock-idle-started");
+        let (command, args) = chaining_fake_cli(&tmp.0, &sentinel);
+        let mut engine = Engine::new(
+            db,
+            tmp.0.clone(),
+            BrainConfig {
+                command,
+                args,
+                ..Default::default()
+            },
+            now,
+        )
+        .expect("engine");
+        engine.step(now, Step::Clock).expect("clock");
+        assert_eq!(
+            engine.report.interpreter_jobs, 1,
+            "舊資料那一段也算解釋層跑過的一次"
+        );
+        assert_eq!(
+            engine.report.historical_jobs, 1,
+            "而且它是舊記憶重讀的那一種"
+        );
+        assert!(
+            engine
+                .db
+                .latest_l2_for_segment(old_core)
+                .expect("old read")
+                .is_some(),
+            "閒著的定時拍要真的把舊資料往前推一段"
+        );
+    }
+
+    /// `daily_budget` 小於 4 的機器分不到舊記憶額度（`3 / 4 == 0`），於是
+    /// cutoff 永遠不會被固定。`maybe_interpret` 看到 `history_state.is_none()`
+    /// 就掛上「50ms 後再醒一次去固定它」——而它永遠等不到，每一次 Activity
+    /// 都白付一趟 consent 讀檔加一次 `chapters_for_range`。
+    ///
+    /// 這一條盯的是 `next_wait`，不是 `historical_jobs`：兩種寫法都不會跑舊
+    /// 資料，只有一種會多醒。
+    #[test]
+    fn a_budget_with_no_history_share_does_not_arm_the_fast_wake() {
+        let tmp = Tmp::new("history-no-share");
+        grant_cloud(&tmp.0);
+        // 只有兩天前的舊資料：現場那半沒東西可做，量到的 50ms 只可能來自
+        // 「等著去固定 cutoff」那一拍。
+        let old = 1_700_000_000_000;
+        let live = old + 2 * 86_400_000;
+        let mut db = Db::open(&Config::db_path(&tmp.0)).expect("db");
+        seed_worth(&mut db, old);
+        let sentinel = tmp.0.join("no-share");
+        let (command, args) = chaining_fake_cli(&tmp.0, &sentinel);
+        let mut engine = Engine::new(
+            db,
+            tmp.0.clone(),
+            BrainConfig {
+                command,
+                args,
+                daily_budget: 3,
+                ..Default::default()
+            },
+            live,
+        )
+        .expect("engine");
+        assert_eq!(engine.history_daily_limit(), 0, "3 / 4 == 0：這台分不到");
+        engine.step(live, Step::Activity).expect("activity");
+        assert_eq!(engine.report.historical_jobs, 0);
+        assert_eq!(engine.report.interpreter_jobs, 0, "現場那半本來就沒事做");
+        assert!(
+            !engine.interpret_again_soon,
+            "現場旗標必須是乾淨的，否則下面那一條量到的是它"
+        );
+        assert!(
+            !engine.history_again_soon,
+            "永遠固定不了的 cutoff 不該掛著一拍去等它"
+        );
+        assert!(
+            engine.next_wait(live) > SLEEP_SLICE.as_millis() as u64,
+            "分不到額度就不該每 50ms 再醒一次：{}",
+            engine.next_wait(live)
+        );
+    }
+
+    #[test]
+    fn no_cloud_consent_does_not_even_stamp_a_history_cutoff() {
+        let tmp = Tmp::new("history-no-consent");
+        let old = 1_700_000_000_000;
+        let now = old + 86_400_000;
+        let mut db = Db::open(&Config::db_path(&tmp.0)).expect("db");
+        seed_worth(&mut db, old);
+        let mut engine =
+            Engine::new(db, tmp.0.clone(), dummy_reviewer_brain(), now).expect("engine");
+        engine.catch_up(now).expect("catch-up");
+        let stamped: i64 = engine
+            .db
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM meta WHERE key LIKE 'l2_continuous_backfill_v1_%'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count stamps");
+        assert_eq!(stamped, 0, "沒簽同意書 2 不固定 cutoff，也不啟動回填");
+        assert_eq!(engine.report.interpreter_jobs, 0);
     }
 
     #[test]
