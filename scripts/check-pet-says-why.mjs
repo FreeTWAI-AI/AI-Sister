@@ -4509,6 +4509,165 @@ console.log("90. 他照著那句話去打開「本機聲音」之後，那句話
   );
 }
 
+console.log("91. 「去開當時的畫面」開不起來的時候，這一頁要說一聲");
+{
+  // SPEC §8.2 把出處 chip 寫成〔定案〕：「點開 = 嘗試讀當時畫面；檔案若在點擊前
+  // 被外部移走會明確失敗」。那個「明確」分成兩段路，而只有前一段有人守：
+  //
+  //   視窗開起來之後 → 圖是半截的／過了保留期／檔案不見了 → `frame.js` 在那扇
+  //     視窗裡照實說（`check-frame-source.mjs` ③⑥ 守著，連表頭都要清掉）。
+  //   視窗**根本沒開起來** → `open_frame` 是 `Result<(), String>`，照實回錯 →
+  //     以前四個呼叫端各自 `void invoke?.(…)`，沒有人 `.catch`，這一頁也沒有
+  //     `unhandledrejection` 的接口。那個錯掉在地上，畫面上一個字都沒有。
+  //
+  // 第二段是唯一一種「沒有視窗可以拿來說話」的失敗，所以話只能說在他剛按下去的
+  // 這一頁上。而既有的閘門一條都抓不到：它們數的是 `open_frame` 被叫了幾次、帶
+  // 了哪個 frameId——**呼叫有發生、參數是對的、回傳值被丟掉**。
+  // 見 `a-call-counting-gate-cannot-see-a-discarded-result`。
+  //
+  // 所以這一節兩層。第一層從原始碼出發：`open_frame` 這個字在 app.js 的產品碼
+  // （非註解行）裡只准出現一次，就是 `openFrame` 那支 helper 裡面。新加第五顆
+  // 「看當時的畫面」的鍵自己去叫 invoke，這一條當場紅。第二層真的去按，證明那
+  // 支 helper 不是擺著好看的。
+  const productLines = read(SRC)
+    .split("\n")
+    .map((line, i) => [i + 1, line])
+    .filter(([, line]) => {
+      const t = line.trim();
+      return !t.startsWith("*") && !t.startsWith("//") && !t.startsWith("/*");
+    });
+  const callSites = productLines.filter(([, line]) => line.includes("open_frame"));
+  check(
+    "app.js 的產品碼裡只有一個地方叫得到 open_frame",
+    callSites.length === 1,
+    callSites,
+  );
+  check(
+    "而那一行就在 openFrame 那支 helper 裡",
+    /invoke\?\.\("open_frame"/u.test(callSites[0]?.[1] ?? "") &&
+      read(SRC).includes("function openFrame(frameId) {"),
+    callSites[0],
+  );
+
+  // 每一顆鍵：先把畫面開起來（`open_frame` 這一輪一定失敗），按下去，讀他看得到
+  // 的那一格。driver 只負責「開畫面、交出一顆鍵」，**斷言一條都不在 driver 裡**
+  // ——理由和 §88 一樣，補一個空殼 driver 要過不了關。
+  const BOOM = "OPEN_FRAME_BLEW_UP_HERE";
+  // 少了 `.catch`，那個 rejection 在 Node 底下會直接把這支殺掉——閘門是紅的，
+  // 而**沒有任何一條斷言抓到它**：輸出在半路斷掉，剩下的節一條都沒跑。這個紅
+  // 是 Node 的性質，不是產品的：真的 webview 裡沒有人會死，它只是安靜地什麼都
+  // 不做，而那正是這一節要抓的東西。所以自己接住，把「那個錯掉在地上」變成一
+  // 條有名字、印得出來的斷言。見 `a-red-run-can-be-red-for-the-wrong-reason`。
+  const dropped = [];
+  const onDropped = (err) => dropped.push(String(err?.message ?? err));
+  process.on("unhandledRejection", onDropped);
+  const ragFixture = (openFrameResult) => ({
+    open_frame: openFrameResult,
+    ask: answer({
+      query_id: 7007,
+      answers: [fact({ frame_id: 42, chunk_id: 31 })],
+      hits: [hit({ chunk_id: 77, frame_id: 84, snippet: "隨便一段原文" })],
+      synthesis: {
+        sentences: [
+          {
+            text: "客服電話是 0800-080-123。",
+            sources: [{ ref: "fact:9", label: "畫面 #42", frame_id: 42 }],
+          },
+        ],
+      },
+    }),
+    recording_state: "recording",
+  });
+  const overviewFixture = (openFrameResult) => ({
+    open_frame: openFrameResult,
+    ask: answer({
+      kind: "memory_overview",
+      query_id: 99123,
+      overview: {
+        kind: "ready",
+        cards: [overviewCard()],
+        truncated: false,
+        evidence_unavailable: 0,
+      },
+    }),
+    recording_state: "recording",
+  });
+  const drivers = {
+    "成句答案底下的本機出處": async (openFrameResult) => {
+      const view = await open(ragFixture(openFrameResult));
+      await view.type("客服電話");
+      return { view, button: view.hits().querySelector(".grounded-source") };
+    },
+    "一般命中那一列（整列點得開）": async (openFrameResult) => {
+      const view = await open(ragFixture(openFrameResult));
+      await view.type("客服電話");
+      // `openable` 是 `classList.add` 上去的，而這個假瀏覽器的 `.class` 選擇器
+      // 只讀 `className`——`querySelector(".openable")` 在這裡永遠是 null。那不是
+      // 「這一列點不開」，是儀器看不到，所以改問 classList 本人。
+      return {
+        view,
+        button: view.hits().children.find((el) => el.classList.contains("openable")) ?? null,
+      };
+    },
+    "記憶總覽卡片的畫面出處": async (openFrameResult) => {
+      const view = await open(overviewFixture(openFrameResult));
+      await view.type("你知道了什麼");
+      return { view, button: view.hits().querySelector(".overview-evidence") };
+    },
+  };
+
+  for (const [name, drive] of Object.entries(drivers)) {
+    // 對照組先跑：開得起來的時候**不准**有話說。少了這一條，helper 寫成「每次都
+    // 抱怨一句」也是綠的，而那比沉默更糟。
+    const okRun = await drive(null);
+    check(`${name}：這顆鍵找得到`, okRun.button !== null && okRun.button !== undefined, okRun.button);
+    await okRun.view.clickElement(okRun.button);
+    check(
+      `${name}：開得起來的時候，這一頁不多嘴`,
+      !okRun.view.line().includes("打不開"),
+      okRun.view.line(),
+    );
+    check(
+      `${name}：而且真的去開了`,
+      okRun.view.invokes.some(({ cmd }) => cmd === "open_frame"),
+      okRun.view.invokes.filter(({ cmd }) => cmd === "open_frame"),
+    );
+
+    const bad = await drive(new Error(BOOM));
+    await bad.view.clickElement(bad.button);
+    const said = bad.view.line();
+    check(`${name}：開不起來要說一聲`, said.includes("打不開"), said);
+    // 原話照抄，理由和 `frame.js` 那邊一樣：只有 Rust 分得出是哪一種開不起來，
+    // 這一頁不准自己編一個成因。
+    check(`${name}：而且照抄 Rust 給的理由`, said.includes(BOOM), said);
+    // 主詞要對。開不起來的是那扇視窗，不是她——`noticeAboutHer` 會讓這句話變成
+    // 她自己出了什麼事，而他下一步會去按「解除全停」。
+    check(
+      `${name}：說的不是她壞了`,
+      !/她(現在)?(叫不起來|出了|壞)/u.test(said),
+      said,
+    );
+  }
+
+  // 兩拍：rejection 是下一個 microtask 才送到 `unhandledRejection` 的。
+  await tick();
+  await tick();
+  check("沒有任何 open_frame 的錯掉在地上", dropped.length === 0, dropped);
+  process.off("unhandledRejection", onDropped);
+
+  /* 這一節抓不到什麼，講清楚——不然下一輪會有人以為它守住了整條路：
+   *
+   *   1. 泡泡底下那顆證據 chip（`.see`）這支夾具叫不出來，所以它只被上面第一層
+   *      蓋到——而第一層管的是「有沒有人繞過 helper」，不是「這顆鍵還在不在」。
+   *      把那顆 chip 的 click handler 整個拿掉，這一節照樣綠。（把它換回裸的
+   *      invoke 倒是會紅，那是第一層抓的。）
+   *   2. `timeline.js` 有它自己的三個呼叫端，不在這支的 SRC 裡，也不共用
+   *      `noticeAboutSomethingElse`——那是另一頁、另一條路。第一層只掃 app.js，
+   *      把那三個呼叫端全換掉，這一節一個字都不會說。
+   *
+   * 兩條都拿 `want=綠` 的刀量過，不是推出來的。 */
+}
+
 /* 上面那幾行把 `diagnose_note` 從 `calls` 濾掉了。濾掉和刪掉偵測器只差一步，
  * 所以這裡量一次那條路還在：實測這一輪會經過 started／persona／bar／answered
  * 四種。只斷言「有東西」不夠——四種裡剩一種也是「有東西」。 */

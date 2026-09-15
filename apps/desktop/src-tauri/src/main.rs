@@ -7140,7 +7140,11 @@ fn open_metrics_window(app: tauri::AppHandle) -> Result<(), String> {
 /// 題來自真實 query log」，靠的就是這一筆。
 ///
 /// 和 [`open_frame`] 分開兩個命令，因為它們的失敗方向不一樣：畫面開不起來要
-/// 讓他知道，記不進題庫不該打斷他正在做的事。畫面那一邊是 fire-and-forget。
+/// 讓他知道，記不進題庫不該打斷他正在做的事。所以 fire-and-forget 的是**題庫**
+/// 這一邊——畫面那一邊由 renderer 的 `openFrame` 接住那個 `Err`，在他剛按下去
+/// 的那一頁上說一句。上一版這裡寫的是「畫面那一邊是 fire-and-forget」，而同一
+/// 句話的前半正好相反：那半是真的，寫下來之後沒有人去兌現，四個呼叫端一律
+/// `void invoke?.(…)`，錯掉在地上。
 #[tauri::command(async)]
 fn log_click(
     query_id: i64,

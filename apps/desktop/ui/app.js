@@ -2829,7 +2829,7 @@ function renderGatekeeper(view) {
     chip.type = "button";
     chip.className = "see";
     chip.textContent = evidence.label;
-    chip.addEventListener("click", () => void invoke?.("open_frame", { frameId: evidence.frame_id }));
+    chip.addEventListener("click", () => openFrame(evidence.frame_id));
     utteranceEvidence.append(chip);
   }
   // 三個 form 是封閉集合；沒有 default。後端多一個字串，這裡會直接報 contract 壞掉。
@@ -3505,6 +3505,30 @@ function overtakenByEvents() {
  */
 function overtakenByRecordingChange() {
   if (notice?.expiresOnRecordingChange === true) notice = null;
+}
+
+/**
+ * 「去開當時的畫面」那幾顆鍵共用的唯一一條路。
+ *
+ * `open_frame` 在 Rust 那邊是 `Result<(), String>`——視窗建不起來的時候它會照實
+ * 回錯。這四個呼叫端以前各自把它 `void` 掉、各叫各的，於是那個錯掉在地上：沒有
+ * 人 `.catch`，這一頁也沒有 `unhandledrejection` 的接口。畫面上的結果是**按下去
+ * 什麼都沒發生**，和「我根本沒按到」逐像素相同——而這幾顆鍵存在的理由，就是讓
+ * 「你三天前看過這個」那句話可以被當場查證。
+ *
+ * 視窗開起來**之後**的事不歸這裡管：圖只寫了一半、過了保留期、檔案被外部移走，
+ * 都由 `frame.js` 在那扇視窗裡說（`check-frame-source.mjs` 守那幾句）。這裡只負
+ * 責「那扇視窗根本沒開起來」——它是唯一一種沒有視窗可以拿來說話的失敗，所以話
+ * 只能說在他剛按下去的這一頁上。
+ *
+ * 借 [`noticeAboutSomethingElse`] 而不是自己寫一格：這正是它的定義——他手指剛剛
+ * 按下去的那一下沒成。主詞也要對，開不起來的是那扇視窗，不是她。
+ */
+function openFrame(frameId) {
+  void invoke?.("open_frame", { frameId })?.catch?.((err) => {
+    noticeAboutSomethingElse(`當時的畫面打不開：${String(err?.message ?? err)}`);
+    paint();
+  });
 }
 
 /**
@@ -4507,7 +4531,7 @@ function sourceLine(item, li, queryId, rank) {
   li.tabIndex = 0;
   li.title = "點開看當時的畫面";
   const open = () => {
-    void invoke?.("open_frame", { frameId: item.frame_id });
+    openFrame(item.frame_id);
     // 他點下去的那一刻，等於幫這一題標了正解——而 `rank` 說出排序把它放
     // 在第幾個。那是檢索品質唯一不必人工標註就拿得到的訊號（PHASES.md
     // Phase 2 的題庫要 ≥ 30 題來自這裡）。
@@ -5209,7 +5233,7 @@ function renderOverview(overview) {
           button.textContent = item.label;
           button.addEventListener("click", (event) => {
             if (event?.isTrusted !== true) return;
-            void invoke?.("open_frame", { frameId: item.frame_id });
+            openFrame(item.frame_id);
           });
           evidence.append(button);
         }
@@ -5333,7 +5357,7 @@ function renderGrounded(synthesis, readings, facts, hits, queryId) {
       button.addEventListener("click", (event) => {
         if (event?.isTrusted !== true) return;
         if (Number.isSafeInteger(targetFrame) && targetFrame > 0) {
-          void invoke?.("open_frame", { frameId: targetFrame });
+          openFrame(targetFrame);
           if (
             queryId !== null &&
             queryId !== undefined &&
