@@ -4444,6 +4444,71 @@ console.log("89. 條文錄音播不出來的時候，不准改用系統聲音把
   );
 }
 
+console.log("90. 他照著那句話去打開「本機聲音」之後，那句話要消失");
+{
+  // 「先到設定打開『本機聲音』，我才會朗讀。」是一則**指示**，不是狀態描述。
+  // 他照做，`persona-changed` 回來，那一刻這句話就變成假的了——而畫面還掛著
+  // 一句「你還沒做」，他會以為沒生效、再去點一次設定。
+  const voiceOff = (on) => ({
+    id: "chatgpt",
+    enabled: true,
+    motion: true,
+    tap_lines: true,
+    voice_enabled: on,
+  });
+  const line = () => {
+    const el = p.node("[data-persona-line]");
+    return el.hidden ? "" : el.textContent;
+  };
+  const instruction = /const ANSWER_READ_VOICE_OFF = "([^"]+)";/u.exec(read(SRC))?.[1] ?? null;
+  const p = await open(
+    {
+      persona_read: voiceOff(false),
+      ask: answer({ hits: [hit({ snippet: "READ_ME" })] }),
+      recording_state: "recording",
+    },
+    // 機器上**有**一支繁中 voice：這樣「不念」的唯一理由就是那個設定關著，
+    // 而不是這個夾具本來就念不出來。
+    { systemVoices: [{ name: "Hanhan", lang: "zh-TW", localService: true }] },
+  );
+  await p.type("念這一段");
+  await p.clickElement(p.localReadButton());
+  check(
+    "本機聲音關著時不念，而且說得出要去哪裡打開",
+    p.localSpeaks() === 0 && instruction !== null && line() === instruction,
+    { speaks: p.localSpeaks(), line: line(), instruction },
+  );
+  // 上面那條是從原始碼把那句話讀出來比的，所以它擋得住「文案漂掉」，擋不住
+  // 「文案還在但不指路」——打一刀 `want=綠` 問過：把它換成「現在不能朗讀。」
+  // 整節全綠。這一條補上那半：他要找的是**設定**裡的**本機聲音**。
+  check(
+    "那句話真的指得出路（設定 ＋ 本機聲音）",
+    instruction !== null && instruction.includes("設定") && instruction.includes("本機聲音"),
+    instruction,
+  );
+  // 真機清單逐字抄了同一句。`check-checklist-quotes-exist.py` 幫不上這一句——
+  // 它的 `QUOTE` 是 `「[^「」]+」`，而這句話自己裡面就有一對「」，永遠配不出來
+  // （內層那個「本機聲音」又只有四個字，被 `MIN = 8` 跳過）。所以在這裡綁。
+  check(
+    "驗收清單上逐字抄的是同一句",
+    instruction !== null &&
+      read(resolve(UI, "../../../docs/WINDOWS-CHECKLIST.md")).includes(instruction),
+    instruction,
+  );
+
+  // 收乾淨它的是 `applyPersona()` 每次都跑的 `clearPersonaLine()`，不是一段只認
+  // 這句話的程式——我原本寫了那一段，打一刀 `want=綠` 才問出來它是死碼。所以這
+  // 裡守的是**結局**（他照做之後那句話不在了，而且真的念得出來），不是機制。
+  await p.fromOutside("persona-changed", voiceOff(true));
+  check("他照做之後那句話不見了", line() === "", line());
+  await p.clickElement(p.localReadButton());
+  check(
+    "而且這一下真的念出來了（不是只有字消失）",
+    p.localSpeaks() === 1 && p.localReadButton().textContent.includes("停止"),
+    { speaks: p.localSpeaks(), label: p.localReadButton().textContent },
+  );
+}
+
 /* 上面那幾行把 `diagnose_note` 從 `calls` 濾掉了。濾掉和刪掉偵測器只差一步，
  * 所以這裡量一次那條路還在：實測這一輪會經過 started／persona／bar／answered
  * 四種。只斷言「有東西」不夠——四種裡剩一種也是「有東西」。 */

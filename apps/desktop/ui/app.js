@@ -1440,6 +1440,16 @@ function clearPersonaSpeaking() {
 const ANSWER_READ_PLAY = "🔊 用本機聲音朗讀";
 const ANSWER_READ_STOP = "■ 停止本機朗讀";
 const ANSWER_READ_STOPPED = "本機朗讀已停止。";
+/*
+ * 這句話是**一則指示**，不是狀態描述：它叫他去設定裡打開「本機聲音」。他照做之後
+ * `persona-changed` 回來，那一刻這句話就變成假的了——畫面不可以還掛著一句「你還沒
+ * 做」，那會讓他以為沒生效又去點一次。
+ *
+ * 收乾淨它的是 `applyPersona()` 裡那句 `clearPersonaLine()`（每次設定變更都清）。
+ * **實測過才這樣寫**：我原本另外加了一段只收這一句的清除，拿掉之後行為一個字都
+ * 沒變——那段是死碼。守著這件事的是 `check-pet-says-why.mjs` 第 90 節。
+ */
+const ANSWER_READ_VOICE_OFF = "先到設定打開「本機聲音」，我才會朗讀。";
 
 /** 正在念的是哪一顆鍵；`null` = 沒有在念。和 `azureAnswerButton` 同一個形狀。 */
 let localAnswerButton = null;
@@ -4830,7 +4840,7 @@ function answerReadLine() {
     // bundled Ogg／pending read，不能一邊說「沒有本機聲音」一邊繼續播舊台詞。
     stopPersonaMedia();
     if (!personaVoiceEnabled) {
-      personaLine.textContent = "先到設定打開「本機聲音」，我才會朗讀。";
+      personaLine.textContent = ANSWER_READ_VOICE_OFF;
       personaLine.hidden = false;
       return;
     }
