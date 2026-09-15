@@ -4111,6 +4111,28 @@ console.log("85. 條文錄音只能由 trusted click 播，而且同一顆按鈕
     before === play && labelled.consentListen().textContent === stop,
     { before, playing: labelled.consentListen().textContent, play, stop },
   );
+
+  // 停下來那句話寫在 `[data-consent-result]` 上，而那一格還有別人的訊息。
+  // 「只收自己寫的那一句」是 `clearPlaybackStoppedLines()` 的承諾，所以要有牙齒：
+  // 他打錯字那句是他還需要看的，不可以被下一次朗讀順手抹掉。
+  await labelled.clickElement(labelled.consentListen());
+  check(
+    "按停之後那一格說得出它停了",
+    labelled.consentResult().includes("已停止"),
+    labelled.consentResult(),
+  );
+  await labelled.type("也許");
+  check(
+    "前提：現在那一格是輸入無效那句話",
+    labelled.consentResult().includes("不會改動同意書"),
+    labelled.consentResult(),
+  );
+  await labelled.clickElement(labelled.consentListen());
+  check(
+    "再開始朗讀不會把別人的訊息一起抹掉",
+    labelled.consentResult().includes("不會改動同意書"),
+    labelled.consentResult(),
+  );
 }
 
 console.log("86. 主視窗齒輪直接開設定，不必再去系統匣找");
@@ -4196,6 +4218,12 @@ console.log("88. 三顆播放鍵的停止規則一致，而下一顆躲不掉這
   const checklist = read(resolve(UI, "../../../docs/WINDOWS-CHECKLIST.md"));
 
   const ZH_TW_VOICE = [{ name: "Hanhan", lang: "zh-TW", localService: true }];
+  // 藏起來要算「什麼都沒說」。`hidden` 沒拿掉而字還留著，讀 `textContent` 會拿到
+  // 上一次的句子，而畫面上一個字都看不到。
+  const personaLineOf = (view) => {
+    const el = view.node("[data-persona-line]");
+    return el.hidden ? "" : el.textContent;
+  };
   const drivers = {
     CONSENT_LISTEN: async () => {
       const view = await open(
@@ -4207,7 +4235,12 @@ console.log("88. 三顆播放鍵的停止規則一致，而下一顆躲不掉這
         },
         { consentVoices: consentVoiceManifest() },
       );
-      return { view, button: view.consentListen(), plays: () => view.audioPlays() };
+      return {
+        view,
+        button: view.consentListen(),
+        plays: () => view.audioPlays(),
+        said: () => view.consentResult(),
+      };
     },
     ANSWER_READ: async () => {
       const view = await open(
@@ -4221,7 +4254,12 @@ console.log("88. 三顆播放鍵的停止規則一致，而下一顆躲不掉這
         { systemVoices: ZH_TW_VOICE },
       );
       await view.type("念這一段");
-      return { view, button: view.localReadButton(), plays: () => view.localSpeaks() };
+      return {
+        view,
+        button: view.localReadButton(),
+        plays: () => view.localSpeaks(),
+        said: () => personaLineOf(view),
+      };
     },
     AZURE_READ: async () => {
       const view = await open({
@@ -4241,7 +4279,12 @@ console.log("88. 三顆播放鍵的停止規則一致，而下一顆躲不掉這
       // 這一節量的是「同一顆鍵按兩下」，先讓那一段自己播完交還成閒置狀態。
       view.finishAudio();
       await tick();
-      return { view, button: view.azureButton(), plays: () => view.audioPlays() };
+      return {
+        view,
+        button: view.azureButton(),
+        plays: () => view.audioPlays(),
+        said: () => personaLineOf(view),
+      };
     },
   };
 
@@ -4288,7 +4331,7 @@ console.log("88. 三顆播放鍵的停止規則一致，而下一顆躲不掉這
 
     const drive = drivers[prefix];
     if (typeof drive !== "function") continue;
-    const { view, button, plays } = await drive();
+    const { view, button, plays, said } = await drive();
     if (!button) {
       check(`${prefix}：driver 交得出那顆按鈕`, false, null);
       continue;
@@ -4308,6 +4351,8 @@ console.log("88. 三顆播放鍵的停止規則一致，而下一顆躲不掉這
       stopped && plays() === playing && button.textContent === play,
       { stopped, before: playing, after: plays(), label: button.textContent },
     );
+    // 鍵面翻回去是看得見，但他的眼睛不一定在按鈕上。三顆都要開口說它停了。
+    check(`${prefix}：停下來會說一聲`, said().includes("已停止"), said());
     // 停止鍵不可以把自己鎖死——停完那顆鍵要能再播一次，不然「停止」就變成
     // 「這一題從此不能再聽」。
     const replayed = await view.clickElement(button);
@@ -4316,6 +4361,8 @@ console.log("88. 三顆播放鍵的停止規則一致，而下一顆躲不掉這
       replayed && plays() === playing + 1 && button.textContent === stop,
       { replayed, before: playing, after: plays(), label: button.textContent },
     );
+    // 那句「已停止」不可以掛在一顆正在播的按鈕底下。
+    check(`${prefix}：再播的時候那句「已停止」收掉了`, !said().includes("已停止"), said());
   }
 }
 

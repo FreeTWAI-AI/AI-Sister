@@ -1396,6 +1396,13 @@ const AZURE_TRUSTED_REPLAY = Object.freeze({});
  */
 const CONSENT_LISTEN_PLAY = "🔊 念給我聽";
 const CONSENT_LISTEN_STOP = "■ 停止朗讀";
+/*
+ * 停下來要說一聲。Azure 那顆從 alpha.109 就會說「Azure 朗讀已停止。」，本機答案
+ * 那顆在它之後補上，只有這一顆安靜地停——而這是三顆裡**最**需要開口的那顆：他正
+ * 在讀的是條文，眼睛在字上不在按鈕上。`[data-consent-result]` 是
+ * `aria-live="polite"`，所以讀螢幕的人也聽得到。
+ */
+const CONSENT_LISTEN_STOPPED = "條文朗讀已停止。";
 
 // 說話微動只跟著「已經開始播放」的那條聲音走，不跟 request、答案完成或 thinking
 // 狀態走。owner identity 讓舊 utterance/audio 的晚 end 不能清掉後來的新聲音。
@@ -1432,6 +1439,7 @@ function clearPersonaSpeaking() {
  */
 const ANSWER_READ_PLAY = "🔊 用本機聲音朗讀";
 const ANSWER_READ_STOP = "■ 停止本機朗讀";
+const ANSWER_READ_STOPPED = "本機朗讀已停止。";
 
 /** 正在念的是哪一顆鍵；`null` = 沒有在念。和 `azureAnswerButton` 同一個形狀。 */
 let localAnswerButton = null;
@@ -1444,6 +1452,7 @@ let localAnswerButton = null;
  */
 const AZURE_READ_PLAY = "☁ 用 Azure 朗讀／重播（送出這段文字）";
 const AZURE_READ_STOP = "■ 停止／取消 Azure 朗讀";
+const AZURE_READ_STOPPED = "Azure 朗讀已停止。";
 
 function resetLocalAnswerButton() {
   if (localAnswerButton) {
@@ -1553,6 +1562,29 @@ function stopPersonaMedia({ cancelAzureNative = true } = {}) {
   // 上面那行 `voiceRequest += 1` 已經讓 `consentIsReading()` 變成 false；這裡只是
   // 把那件事畫出來。五條停止路徑共用這一個出口，所以按鈕不會卡在「停止朗讀」。
   paintConsentListen();
+  clearPlaybackStoppedLines();
+}
+
+/*
+ * 上一段留下的「…已停止。」不可以掛在一顆正在播的按鈕底下。
+ *
+ * 這裡放在 `stopPersonaMedia()` 的出口，而三顆鍵的停止分支都是**先**呼叫它、
+ * 再寫自己那句話——所以「停下來會說一聲」和「再播就收掉」不會互相踩到，而換題、
+ * 關聲、master stop 那幾條也一起收乾淨。
+ *
+ * **只收自己寫的那三句。** `personaLine` 上還有「找不到本機中文語音。」「Azure
+ * 狀態更新中。」，`consentResult` 上還有「這一張沒有保存：…」——那些是他還需要
+ * 看的，不是這顆鍵的事。實測過：Azure 那句從 alpha.109 起就一直掛著。
+ */
+function clearPlaybackStoppedLines() {
+  const said = personaLine?.textContent;
+  if (said === ANSWER_READ_STOPPED || said === AZURE_READ_STOPPED) {
+    personaLine.textContent = "";
+    personaLine.hidden = true;
+  }
+  if (consentResult && consentResult.textContent === CONSENT_LISTEN_STOPPED) {
+    consentResult.textContent = "";
+  }
 }
 
 /**
@@ -2185,6 +2217,8 @@ async function playConsentSheet(event) {
   // 閘門——這顆按鈕只有一條路進來，不替「頁面上的腳本」另開一個分支。
   if (consentIsReading()) {
     stopPersonaMedia();
+    consentResult.textContent = CONSENT_LISTEN_STOPPED;
+    consentResult.classList.remove("bad");
     return;
   }
   const clip = consentClipFor(consentGuideSheet);
@@ -4788,7 +4822,7 @@ function answerReadLine() {
     // 正在念的就是這一顆的話，這一下是停止。和 Azure 那顆鍵同一個形狀。
     if (localAnswerButton === button) {
       stopPersonaMedia();
-      personaLine.textContent = "本機朗讀已停止。";
+      personaLine.textContent = ANSWER_READ_STOPPED;
       personaLine.hidden = false;
       return;
     }
@@ -5048,7 +5082,7 @@ function answerAzureLine() {
     }
     if (azureAnswerButton === button) {
       stopPersonaMedia();
-      personaLine.textContent = "Azure 朗讀已停止。";
+      personaLine.textContent = AZURE_READ_STOPPED;
       personaLine.hidden = false;
       return;
     }
