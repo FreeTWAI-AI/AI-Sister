@@ -328,6 +328,10 @@ Manager backend 與 renderer contract 有自動測試，不等於正式 Windows 
       Azure 可能已計入這次字數。
 - [ ] 在正式 WebView2 上驗新答案 MP3 回來後會真的自動播放一次；這一步發生在 async
       POST 之後，不能拿 renderer fixture 的 `audio.play()` 被呼叫過冒充使用者真的聽得到。
+- [ ] 播到一半再按同一顆鍵要停，不是重播——三顆播放鍵（同意書條文、本機答案、Azure
+      答案）的規則要一致。播的時候那顆鍵寫「■ 停止／取消 Azure 朗讀」，停完、自己播完、
+      失敗都要變回「☁ 用 Azure 朗讀／重播（送出這段文字）」而且還按得動；停下來時她要說
+      「Azure 朗讀已停止。」，但不可以順口宣稱網路或計費也取消了。
 - [ ] 用 delayed transport 分別讓 transport fence 與關閉開關、改區域／聲音、存刪 key、
       第四張 consent mutation、native cancel 交錯。mutation／cancel 先贏時必須是 0 POST；
       transport 先贏時操作可等到 response／45 秒 timeout，但成功回覆後舊 request 不得才送。

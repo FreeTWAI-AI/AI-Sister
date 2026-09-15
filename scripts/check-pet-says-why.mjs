@@ -353,6 +353,7 @@ async function open(
     beforeListenerRegistered = null,
     browserOnly = false,
     consentVoices = null,
+    systemVoices = null,
   } = {},
 ) {
   // `domOf` 只生得出 index.html 上真的有的東西——見 fake-dom.mjs 開頭那段。
@@ -424,8 +425,24 @@ async function open(
       return [];
     }
   };
+  // 真的 WebView2 一定有這個建構子。以前這個假瀏覽器沒有它，於是
+  // `speakWithLocalSystemVoice` 第一行就回 false——好幾條「不 fallback 到本機」
+  // 的斷言其實是靠「這個全域不存在」過的，而那件事在他的機器上是假的。補上之後
+  // 那幾條改成靠真正的理由過關：底下 `getVoices()` 預設一支都不回。
+  globalThis.SpeechSynthesisUtterance = class {
+    constructor(text) {
+      this.text = text;
+      this.voice = null;
+      this.lang = "";
+      this.rate = 1;
+      this.pitch = 1;
+    }
+  };
   globalThis.speechSynthesis = {
-    getVoices: () => [],
+    // 預設一支都沒有，所以 `speakWithLocalSystemVoice` 直接回 false——這個檔案
+    // 大部分的情境要的正是那個。要**驅動**本機朗讀那顆鍵的人得自己送一支
+    // `localService` 的繁中 voice 進來（見第 88 節）。
+    getVoices: () => systemVoices ?? [],
     addEventListener() {},
     cancel() {},
     speak() {
@@ -525,6 +542,12 @@ async function open(
     consentListen: () => node("[data-consent-listen]"),
     input: () => node("[data-ask-input]"),
     azureButton: () => node("[data-hits]").querySelector(".answer-cloud"),
+    // Azure 那顆的 class 是 `answer-read answer-cloud`，所以 `.answer-read`
+    // 兩顆都會中；這個假 DOM 的 selector 子集沒有 `:not()`，要自己濾。
+    localReadButton: () =>
+      node("[data-hits]")
+        .querySelectorAll(".answer-read")
+        .find((el) => !String(el.className).split(/\s+/u).includes("answer-cloud")) ?? null,
     audioPlays: () => audioPlays,
     audioPauses: () => audioPauses,
     playbackTrace: () => [...playbackTrace],
@@ -4150,6 +4173,151 @@ console.log("87. 圖示不靠字型，拖她的時候不會順便讓她說話");
 // 30 reply）且時長與位元組對得上，湊不齊就回空的，於是「拖她不會說話」會變成
 // 兩個空字串相等的假綠。要加拖曳的行為斷言就去 `check-persona.mjs`，那邊的
 // `persona("chatgpt")` 本來就有真台詞。上面第 87 節守的是接線還在。
+
+console.log("88. 三顆播放鍵的停止規則一致，而下一顆躲不掉這條規則");
+{
+  // SPEC 現在宣稱「三顆播放鍵（同意書條文、本機答案、Azure 答案）的規則一致：
+  // 第二下停止，不是重播」。三顆**各自**的行為在別處都有人守（同意書 §85、
+  // Azure §58、本機朗讀在 `check-persona.mjs`）——缺的是橫的那一條：沒有任何
+  // 東西擋得住「第四顆播放鍵不加停止就上線」，而 SPEC 那句話會替它作保。
+  //
+  // 所以這一節不從我手抄的清單出發，從 app.js 的**原始碼**出發：成對的
+  // `const X_PLAY` ／ `const X_STOP` 就是播放鍵的花名冊，每一個前綴都得有一個
+  // driver。driver 只負責「把畫面開起來，交出一顆閒著的按鈕和它的播放計數」，
+  // **斷言一條都不在 driver 裡**——所以補一個空殼 driver 過不了關。
+  // 見 `an-exhaustive-tripwire-makes-you-look-not-update`：窮舉 tripwire 只逼
+  // 你看一眼，不逼你補；逼你補的是「那顆按鈕真的要被按兩下」。
+  const labels = new Map();
+  for (const [, prefix, role, text] of read(SRC).matchAll(
+    /const ([A-Z][A-Z0-9_]*)_(PLAY|STOP) = "([^"]*)";/gu,
+  )) {
+    labels.set(prefix, { ...(labels.get(prefix) ?? {}), [role]: text });
+  }
+  const checklist = read(resolve(UI, "../../../docs/WINDOWS-CHECKLIST.md"));
+
+  const ZH_TW_VOICE = [{ name: "Hanhan", lang: "zh-TW", localService: true }];
+  const drivers = {
+    CONSENT_LISTEN: async () => {
+      const view = await open(
+        {
+          consent_read: consentView([false, false, false, false], [false, false, false, false]),
+          persona_fixed_voice_admit: { presentation_id: "consent-voice" },
+          master_stop_presentation_begin: true,
+          master_stop_presentation_end: null,
+        },
+        { consentVoices: consentVoiceManifest() },
+      );
+      return { view, button: view.consentListen(), plays: () => view.audioPlays() };
+    },
+    ANSWER_READ: async () => {
+      const view = await open(
+        {
+          // 本機朗讀要兩個前提：設定裡「本機聲音」開著，以及這台機器真的有一支
+          // `localService` 的中文 voice。少任何一個，那顆鍵會改口說為什麼不念。
+          persona_read: { id: "chatgpt", enabled: true, motion: true, tap_lines: true, voice_enabled: true },
+          ask: answer({ hits: [hit({ snippet: "READ_ME" })] }),
+          recording_state: "recording",
+        },
+        { systemVoices: ZH_TW_VOICE },
+      );
+      await view.type("念這一段");
+      return { view, button: view.localReadButton(), plays: () => view.localSpeaks() };
+    },
+    AZURE_READ: async () => {
+      const view = await open({
+        azure_tts_read: AZURE_READY,
+        azure_tts_speak: ({ expected }) => ({
+          generation: expected.generation + 1,
+          content_type: "audio/mpeg",
+          audio_bytes: 3,
+          data_url: "data:audio/mpeg;base64,AQID",
+          presentation_id: `880${expected.generation}`,
+        }),
+        ask: answer({ hits: [hit({ snippet: "PLAY_ME" })] }),
+        recording_state: "recording",
+      });
+      await view.type("播放");
+      // 新答案的 MP3 回來會自動播一次（§58），所以這顆鍵一開始就是停止鍵。
+      // 這一節量的是「同一顆鍵按兩下」，先讓那一段自己播完交還成閒置狀態。
+      view.finishAudio();
+      await tick();
+      return { view, button: view.azureButton(), plays: () => view.audioPlays() };
+    },
+  };
+
+  const noDriver = [...labels.keys()].filter((prefix) => !Object.hasOwn(drivers, prefix));
+  const noLabels = Object.keys(drivers).filter((prefix) => !labels.has(prefix));
+  check(
+    "每一對 *_PLAY／*_STOP 都有人真的去按它",
+    noDriver.length === 0 && noLabels.length === 0,
+    { 沒有driver: noDriver, 沒有常數: noLabels, 找到的: [...labels.keys()] },
+  );
+  // 「一致」是一句關於複數的話。只剩一顆的時候這一整節會全綠而什麼都沒證明。
+  check("花名冊上不只一顆鍵", labels.size >= 3, [...labels.keys()]);
+
+  // 花名冊是靠**命名**找到的，所以它有一個看得見的極限：寫成字面值的按鈕它看不
+  // 到——Azure 那顆在這一版之前就正是那樣，三處字面值抄來抄去。這一條把極限補
+  // 回大半：這三個記號只准出現在 `*_PLAY`／`*_STOP` 的值裡，有人手寫一顆新的
+  // 播放鍵會先撞到這裡。
+  //
+  // **剩下的那一半仍然是假的**：一顆連記號都不用的播放鍵，這一節到現在還是看
+  // 不到它。這句自白是打過刀量出來的，不是我猜的——同一顆按鈕加記號這一整節會
+  // 紅，拿掉記號就整節全綠。
+  const known = new Set([...labels.values()].flatMap((pair) => Object.values(pair)));
+  const loose = [...read(SRC).matchAll(/"[^"\n]*[\u{1F50A}\u{2601}\u{25A0}][^"\n]*"/gu)]
+    .map(([literal]) => literal.slice(1, -1))
+    .filter((text) => !known.has(text));
+  check("播放鍵的記號沒有散落在常數以外的地方", loose.length === 0, loose);
+
+  for (const [prefix, pair] of labels) {
+    const play = pair.PLAY ?? null;
+    const stop = pair.STOP ?? null;
+    check(
+      `${prefix}：播放與停止是兩個不同的字串`,
+      play !== null && stop !== null && play !== stop,
+      pair,
+    );
+    // 兩臂吐出一模一樣的字串時，分辨它們的那個條件就是零覆蓋——而這裡的下游
+    // 是他的眼睛，不是另一支程式。真機 checklist 要查得到這兩句話，他才知道
+    // 該看到什麼。
+    check(
+      `${prefix}：兩句話都寫進真機 checklist`,
+      play !== null && stop !== null && checklist.includes(play) && checklist.includes(stop),
+      { play, stop, hasPlay: checklist.includes(play), hasStop: checklist.includes(stop) },
+    );
+
+    const drive = drivers[prefix];
+    if (typeof drive !== "function") continue;
+    const { view, button, plays } = await drive();
+    if (!button) {
+      check(`${prefix}：driver 交得出那顆按鈕`, false, null);
+      continue;
+    }
+    check(`${prefix}：閒著的時候鍵面寫的是播放`, button.textContent === play, button.textContent);
+    const idle = plays();
+    const started = await view.clickElement(button);
+    check(
+      `${prefix}：一下 trusted click 開始播，鍵面翻成停止`,
+      started && plays() === idle + 1 && button.textContent === stop,
+      { started, before: idle, after: plays(), label: button.textContent },
+    );
+    const playing = plays();
+    const stopped = await view.clickElement(button);
+    check(
+      `${prefix}：第二下是停止，不是重播`,
+      stopped && plays() === playing && button.textContent === play,
+      { stopped, before: playing, after: plays(), label: button.textContent },
+    );
+    // 停止鍵不可以把自己鎖死——停完那顆鍵要能再播一次，不然「停止」就變成
+    // 「這一題從此不能再聽」。
+    const replayed = await view.clickElement(button);
+    check(
+      `${prefix}：停完還能再播一次`,
+      replayed && plays() === playing + 1 && button.textContent === stop,
+      { replayed, before: playing, after: plays(), label: button.textContent },
+    );
+  }
+}
 
 /* 上面那幾行把 `diagnose_note` 從 `calls` 濾掉了。濾掉和刪掉偵測器只差一步，
  * 所以這裡量一次那條路還在：實測這一輪會經過 started／persona／bar／answered

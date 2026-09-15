@@ -1436,6 +1436,15 @@ const ANSWER_READ_STOP = "■ 停止本機朗讀";
 /** 正在念的是哪一顆鍵；`null` = 沒有在念。和 `azureAnswerButton` 同一個形狀。 */
 let localAnswerButton = null;
 
+/*
+ * Azure 那顆鍵的兩句話。以前是三處字面值（建立時、reset 時、開始送的時候），
+ * 兩處寫「播」一處寫「停」——同一句話抄三份，改一處不會有任何畫面上的症狀。
+ * 收成常數還有第二個用途：`check-pet-says-why.mjs` §88 靠 `*_PLAY`／`*_STOP`
+ * 這個命名把三顆播放鍵**找出來**，而不是在閘門裡抄一份名單。
+ */
+const AZURE_READ_PLAY = "☁ 用 Azure 朗讀／重播（送出這段文字）";
+const AZURE_READ_STOP = "■ 停止／取消 Azure 朗讀";
+
 function resetLocalAnswerButton() {
   if (localAnswerButton) {
     localAnswerButton.disabled = false;
@@ -1447,7 +1456,7 @@ function resetLocalAnswerButton() {
 function resetAzureAnswerButton() {
   if (azureAnswerButton) {
     azureAnswerButton.disabled = false;
-    azureAnswerButton.textContent = "☁ 用 Azure 朗讀／重播（送出這段文字）";
+    azureAnswerButton.textContent = AZURE_READ_PLAY;
   }
   azureAnswerButton = null;
 }
@@ -4867,7 +4876,7 @@ async function speakAzureAnswer(button, intent) {
   azureSpeechRequestPending = true;
   azurePendingGeneration = nativeGeneration;
   azureAnswerButton = button;
-  button.textContent = "■ 停止／取消 Azure 朗讀";
+  button.textContent = AZURE_READ_STOP;
   let audio;
   try {
     audio = await invoke("azure_tts_speak", {
@@ -5029,7 +5038,7 @@ function answerAzureLine() {
   const button = document.createElement("button");
   button.type = "button";
   button.className = "answer-read answer-cloud";
-  button.textContent = "☁ 用 Azure 朗讀／重播（送出這段文字）";
+  button.textContent = AZURE_READ_PLAY;
   button.addEventListener("click", (event) => {
     if (event?.isTrusted !== true) return;
     if (azureCancelPending) {
