@@ -133,6 +133,42 @@ function openFrame(frameId) {
   });
 }
 
+/**
+ * 「改成這樣」「結案」「其他一切」——這一頁三顆會**寫進資料庫**的鍵共用的唯一一條路。
+ *
+ * 和上面那支 `openFrame` 是同一個病的另一半，而後果重得多。`open_frame` 開不起來，
+ * 頂多是他沒看到那張圖；這三顆失敗的時候資料庫裡**一個字都沒變**，而畫面和成功
+ * 長得一模一樣。三個呼叫端以前都寫成 `void invoke?.(…).then(重畫)`：Rust 那邊回
+ * `Err` 的時候 `.then` 整段不跑，於是沒有重畫、沒有話、沒有紅字——輸入框裡還是他
+ * 打的那句，「結案」那顆鍵還在原地。看起來就是「我大概沒按到」，他按第二次、還是
+ * 一樣，然後走掉。
+ *
+ * 這三顆偏偏是 SPEC §8.3 點名的那個東西：「使用者的提問與更正是唯一拿得到的
+ * ground truth」。更正沒存進去，她下一輪照舊的猜再寫一次；而他不會再改第三次，
+ * 因為在他看來他已經改過了。
+ *
+ * 句子要帶他剛剛按的那顆鍵的**字面**：`tell` 只有一格，這一頁好幾顆鍵共用它
+ *（「看當時的畫面」「忘掉這一整天」都在寫），不指名是哪一顆，那句話就沒有主詞。
+ * 也要明講「這一筆還是原來的樣子」——只說「沒做成」聽起來像慢了一點，而要講的是
+ * 它**沒有發生**。理由照抄 Rust 的原話，和 `openFrame` 那邊同一條紀律：資料庫鎖住、
+ * 磁碟滿了、那一列已經被忘掉了，只有它分得出來，這一頁不准自己編一個。
+ *
+ * 成功那一臂先 `tell("")`。他按第二次成功了，上一句失敗的話不收掉的話，會和那一列
+ * 已經消失的承諾同時留在畫面上，而它這時候是假的。換天和改時間範圍會清（`openDay`
+ * 和那兩個 `input`），換頁不會（`setView` 裡沒有 `tell("")`），所以這裡自己清。
+ */
+function wrote(call, label, after) {
+  void call?.then?.(
+    () => {
+      tell("");
+      void after();
+    },
+    (err) => {
+      tell(`「${label}」沒做成，這一筆還是原來的樣子：${String(err?.message ?? err)}`, true);
+    },
+  );
+}
+
 // ---------- 把一天排成一列 ----------
 
 /**
@@ -754,13 +790,17 @@ function guessRow(card, place = "day") {
       ev.preventDefault();
       const next = input.value.trim();
       if (!next || invoke == null) return;
-      void invoke("correct_l2", {
-        segmentCoreStart: Number(String(card.segment_ref ?? "").replace(/^segment:/, "")),
-        activity: next,
-      }).then(() => {
-        if (view === "guess") void renderGuesses();
-        else if (current) void load(current.start_ts);
-      });
+      wrote(
+        invoke("correct_l2", {
+          segmentCoreStart: Number(String(card.segment_ref ?? "").replace(/^segment:/, "")),
+          activity: next,
+        }),
+        go.textContent,
+        () => {
+          if (view === "guess") void renderGuesses();
+          else if (current) void load(current.start_ts);
+        },
+      );
     });
     li.append(form);
   }
@@ -1565,13 +1605,17 @@ function pledgeRow(c) {
     kill.type = "button";
     kill.textContent = "結案";
     kill.addEventListener("click", () => {
-      void invoke?.("commitment_kill", { id: c.id, note: "使用者結案" }).then(() => renderPledges());
+      wrote(
+        invoke?.("commitment_kill", { id: c.id, note: "使用者結案" }),
+        kill.textContent,
+        () => renderPledges(),
+      );
     });
     const other = document.createElement("button");
     other.type = "button";
     other.textContent = "其他一切";
     other.addEventListener("click", () => {
-      void invoke?.("commitment_other", { id: c.id }).then(() => renderPledges());
+      wrote(invoke?.("commitment_other", { id: c.id }), other.textContent, () => renderPledges());
     });
     actions.append(kill, other);
     li.append(actions);

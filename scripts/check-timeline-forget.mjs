@@ -766,6 +766,201 @@ console.log("⑫ 「看當時的畫面」開不起來的時候，這一頁要說
    *   拿 `want=綠` 的刀量過，不是推出來的。 */
 }
 
+console.log("⑬ 「改成這樣」「結案」「其他一切」寫不進去的時候，不准長得像成功");
+{
+  // ⑫ 守的是**讀**失敗（那扇視窗沒開起來）。這三顆是**寫**，後果重得多：Rust 回
+  // `Err` 的時候資料庫裡一個字都沒變，而舊的寫法 `void invoke?.(…).then(重畫)` 會
+  // 讓 `.then` 整段不跑——沒有重畫、沒有話、沒有紅字。畫面和「我根本沒按到」逐像素
+  // 相同，而他會當成已經改好了走掉。更正正是 SPEC §8.3 說「唯一拿得到的 ground
+  // truth」的那個東西。
+  //
+  // 第一層從原始碼出發，而且問的是整族不是這三顆：這一頁只准剩下**一個**地方把
+  // invoke 的結果丟在地上，就是 `openFrame`（它自己接了 `.catch`）。第四顆鍵照舊
+  // 寫成 `void invoke?.("x").then(…)`，這一條當場紅。
+  const productLines = read(SRC)
+    .split("\n")
+    .map((line, i) => [i + 1, line])
+    .filter(([, line]) => {
+      const t = line.trim();
+      return !t.startsWith("*") && !t.startsWith("//") && !t.startsWith("/*");
+    });
+  const dropped = productLines.filter(([, line]) => line.includes("void invoke"));
+  check("這一頁只剩一個地方把 invoke 的結果丟在地上", dropped.length === 1, dropped);
+  check(
+    "而那一個是 openFrame，它自己接了 .catch",
+    (dropped[0]?.[1] ?? "").includes("open_frame") && (dropped[0]?.[1] ?? "").includes(".catch"),
+    dropped[0],
+  );
+  for (const cmd of ["correct_l2", "commitment_kill", "commitment_other"]) {
+    // 要 `invoke` 和指令名在同一行：這一頁底下那個 `?demo=1` 的假 native 有一整排
+    // 同名的 `case`，它是**被呼叫的那一端**，不是呼叫端。（它自己就會 `throw`
+    // 「找不到還活著的承諾」——也就是說這個病在 demo 模式下本來就示範得出來。）
+    const sites = productLines.filter(
+      ([, line]) => line.includes(`"${cmd}"`) && line.includes("invoke"),
+    );
+    check(`產品碼裡只有一個地方叫得到 ${cmd}`, sites.length === 1, sites);
+  }
+  check("而且三顆都走同一支 wrote", read(SRC).includes("function wrote(call, label, after) {"));
+
+  // 和 ⑫ 同一個理由：少了接口，rejection 在 Node 底下會直接把這支殺掉，整體是紅的
+  // 而沒有任何一條斷言抓到它。真的 webview 裡沒有人會死，它只是安靜地什麼都不做。
+  const onFloor = [];
+  const onDropped = (err) => onFloor.push(String(err?.message ?? err));
+  process.on("unhandledRejection", onDropped);
+
+  const BOOM = "TIMELINE_WRITE_BLEW_UP";
+  const CARD = {
+    id: 9001,
+    segment_ref: "segment:1755360000000",
+    activity: "在看帳單",
+    model_confidence: 0.31,
+    evidence: [],
+  };
+  const PLEDGE = {
+    id: 77,
+    text: "五點去接她",
+    status: "open",
+    due_hint: "17:00",
+    due_source: "explicit",
+    tombstoned: false,
+    evidence: [],
+  };
+  /** 換到上面那排的某一頁。走法和 ⑨ 的 `openOutbound` 一樣。 */
+  const goTo = async (page, name) => {
+    const btn = { getAttribute: (k) => (k === "data-view" ? name : null) };
+    const ev = { target: { closest: (sel) => (sel === "[data-view]" ? btn : null) } };
+    for (const fn of page.node("[data-views]").handlers.click ?? []) fn(ev);
+    await tick();
+  };
+
+  // driver 只負責「把畫面開起來、交出一顆鍵和按它的方法」，**斷言一條都不在
+  // driver 裡**：補一個空殼 driver 要過不了關。
+  const drivers = {
+    "她猜的那張卡上的「改成這樣」": {
+      cmd: "correct_l2",
+      reread: "memory_guesses",
+      async open(result) {
+        const page = await open({
+          correct_l2: result,
+          memory_current_guess: { message: "上一段在看帳單", card: null },
+          memory_guesses: [CARD],
+        });
+        await goTo(page, "guess");
+        const form = page.node("[data-memory]").querySelector(".guess-fix");
+        const button = form?.querySelectorAll("button")[0] ?? null;
+        return {
+          page,
+          button,
+          press: async () => {
+            form.querySelectorAll("input")[0].value = "其實我在報稅";
+            for (const fn of form.handlers.submit ?? []) fn({ preventDefault: () => {} });
+            await tick();
+          },
+        };
+      },
+    },
+    "承諾那一列的「結案」": {
+      cmd: "commitment_kill",
+      reread: "memory_commitments",
+      async open(result) {
+        const page = await open({ commitment_kill: result, memory_commitments: [PLEDGE] });
+        await goTo(page, "commitments");
+        const button = page.node("[data-pledges]").querySelectorAll("button")[0] ?? null;
+        return {
+          page,
+          button,
+          press: async () => {
+            for (const fn of button.handlers.click ?? []) fn();
+            await tick();
+          },
+        };
+      },
+    },
+    "承諾那一列的「其他一切」": {
+      cmd: "commitment_other",
+      reread: "memory_commitments",
+      async open(result) {
+        const page = await open({ commitment_other: result, memory_commitments: [PLEDGE] });
+        await goTo(page, "commitments");
+        const button = page.node("[data-pledges]").querySelectorAll("button")[1] ?? null;
+        return {
+          page,
+          button,
+          press: async () => {
+            for (const fn of button.handlers.click ?? []) fn();
+            await tick();
+          },
+        };
+      },
+    },
+  };
+
+  for (const [name, d] of Object.entries(drivers)) {
+    // 對照組先跑：寫成功的時候**不准**有話說。少了這一條，helper 寫成「每次都抱怨
+    // 一句」也是綠的，而那比沉默更糟。
+    const okRun = await d.open(null);
+    check(`${name}：這顆鍵找得到`, okRun.button != null, okRun.button?.textContent);
+    const before = okRun.page.calls.filter((c) => c === d.reread).length;
+    await okRun.press();
+    check(`${name}：真的寫出去了`, okRun.page.calls.includes(d.cmd), okRun.page.calls);
+    check(`${name}：寫成功不多嘴`, !okRun.page.say().includes("沒做成"), okRun.page.say());
+    // 成功那一臂要重讀。少了這一條，把 `after()` 整個拿掉也是綠的，而畫面上那一列
+    // 就永遠停在他按之前的樣子——和失敗長得一模一樣。
+    check(
+      `${name}：寫完了要重讀一次`,
+      okRun.page.calls.filter((c) => c === d.reread).length > before,
+      okRun.page.calls,
+    );
+
+    const bad = await d.open(new Error(BOOM));
+    await bad.press();
+    const said = bad.page.say();
+    check(`${name}：寫不進去要說一聲`, said.includes("沒做成"), said);
+    // 指名他剛剛按的那顆鍵。`tell` 只有一格、這一頁好幾顆鍵共用——比的是**鍵上的字**
+    // 本身，所以改了按鈕的字而忘了改句子，這一條會紅。
+    check(
+      `${name}：指名他按的是哪一顆`,
+      said.includes(`「${bad.button.textContent}」`),
+      [said, bad.button.textContent],
+    );
+    // 「沒做成」聽起來像慢了一點。要講的是它**沒有發生**。
+    check(`${name}：明講這一筆沒有變`, said.includes("還是原來的樣子"), said);
+    check(`${name}：而且照抄 Rust 給的理由`, said.includes(BOOM), said);
+    check(`${name}：沒有蓋掉這一天的摘要`, !bad.page.sub().includes("沒做成"), bad.page.sub());
+
+    // 他按第二次、這次成功了：上一句失敗的話要收掉。留著的話，它會和一列已經消失
+    // 的承諾同時在畫面上，而它這時候是假的。
+    let n = 0;
+    const flaky = () => {
+      n += 1;
+      if (n === 1) throw new Error(BOOM);
+      return null;
+    };
+    const retry = await d.open(flaky);
+    await retry.press();
+    check(`${name}：第一下失敗有說話`, retry.page.say().includes("沒做成"), retry.page.say());
+    await retry.press();
+    check(`${name}：第二下成功要把上一句收掉`, !retry.page.say().includes("沒做成"), retry.page.say());
+  }
+
+  // 兩拍：rejection 是下一個 microtask 才送到 `unhandledRejection` 的。
+  await tick();
+  await tick();
+  check("沒有任何一次寫入的錯掉在地上", onFloor.length === 0, onFloor);
+  process.off("unhandledRejection", onDropped);
+
+  /* 這一節抓不到什麼，講清楚——兩條都拿 `want=綠` 的刀量過，不是推出來的：
+   *
+   *   一、**它不看送出去的內容**。把 `activity: next` 換成 `activity: ""`（他打的
+   *   那句話整個丟掉，而 invoke 照樣成功）這一節照樣綠。它守的是「失敗的時候畫面
+   *   要說實話」，不是「成功的時候送對了東西」。
+   *
+   *   二、**換頁不會把那句話收掉**。按了「結案」失敗、再切到「外送」那一頁，那句
+   *   紅字還留在底下——`setView` 裡沒有 `tell("")`（`openDay` 和那兩個時間輸入框才
+   *   有）。那句話這時候仍然是真的（那一筆確實沒寫進去），所以我沒動它；但這一節
+   *   從來沒換過頁，在 `setView` 裡補一行 `tell("")` 它也是綠的。 */
+}
+
 console.log("");
 if (failed > 0) {
   console.log(`✗ ${failed} 條沒過——那顆不可逆的按鈕停在一個它不該停的狀態。`);
