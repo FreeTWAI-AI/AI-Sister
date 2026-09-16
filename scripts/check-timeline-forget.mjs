@@ -766,17 +766,24 @@ console.log("⑫ 「看當時的畫面」開不起來的時候，這一頁要說
    *   拿 `want=綠` 的刀量過，不是推出來的。 */
 }
 
-console.log("⑬ 「改成這樣」「結案」「其他一切」寫不進去的時候，不准長得像成功");
+console.log("⑬ 六顆寫入鍵：寫不進去的時候，不准長得像成功");
 {
-  // ⑫ 守的是**讀**失敗（那扇視窗沒開起來）。這三顆是**寫**，後果重得多：Rust 回
+  // ⑫ 守的是**讀**失敗（那扇視窗沒開起來）。這六顆是**寫**，後果重得多：Rust 回
   // `Err` 的時候資料庫裡一個字都沒變，而舊的寫法 `void invoke?.(…).then(重畫)` 會
   // 讓 `.then` 整段不跑——沒有重畫、沒有話、沒有紅字。畫面和「我根本沒按到」逐像素
   // 相同，而他會當成已經改好了走掉。更正正是 SPEC §8.3 說「唯一拿得到的 ground
   // truth」的那個東西。
   //
-  // 第一層從原始碼出發，而且問的是整族不是這三顆：這一頁只准剩下**一個**地方把
-  // invoke 的結果丟在地上，就是 `openFrame`（它自己接了 `.catch`）。第四顆鍵照舊
-  // 寫成 `void invoke?.("x").then(…)`，這一條當場紅。
+  // **這一節第一版只收了三顆**（改成這樣／結案／其他一切），而章節那三顆（合併／
+  // 切開／撤銷）比它們早出貨、走的是自己那條 `runChapterEdit`，`catch` 裡寫的是
+  // `say(錯誤字串, true)`——`say` 那一格是**這一天的摘要**，於是一次按壞就把
+  // 「5 段・312 筆・09:12–18:40」換成一句沒有主詞的 Rust 錯誤，要換一天才回得來。
+  // 族規寫成橫的就要第一版把既有成員全接上跑；沒接的那幾顆不會因為規則存在而變好。
+  //
+  // 第一層從原始碼出發，問的是整族不是這六顆：這一頁只准剩下**一個**地方把 invoke
+  // 的結果丟在地上，就是 `openFrame`（它自己接了 `.catch`）；而且只准有一支
+  // `catch` 把錯誤寫進 `say`，就是 `openDay` 那一支——整天讀不起來的時候本來就沒有
+  // 摘要可言。第七顆鍵照舊寫成 `void invoke?.("x").then(…)`，這一條當場紅。
   const productLines = read(SRC)
     .split("\n")
     .map((line, i) => [i + 1, line])
@@ -791,16 +798,35 @@ console.log("⑬ 「改成這樣」「結案」「其他一切」寫不進去的
     (dropped[0]?.[1] ?? "").includes("open_frame") && (dropped[0]?.[1] ?? "").includes(".catch"),
     dropped[0],
   );
-  for (const cmd of ["correct_l2", "commitment_kill", "commitment_other"]) {
+  // 章節那三個指令各有兩個呼叫端（活動級和分鐘級），所以是 2 不是 1——數字寫死在
+  // 這裡，下一顆新鍵不接 `wrote` 就會把它撞紅。
+  const wants = {
+    correct_l2: 1,
+    commitment_kill: 1,
+    commitment_other: 1,
+    timeline_merge_chapters: 2,
+    timeline_undo_segment_edit: 2,
+    timeline_split_chapter: 1,
+  };
+  for (const [cmd, want] of Object.entries(wants)) {
     // 要 `invoke` 和指令名在同一行：這一頁底下那個 `?demo=1` 的假 native 有一整排
     // 同名的 `case`，它是**被呼叫的那一端**，不是呼叫端。（它自己就會 `throw`
     // 「找不到還活著的承諾」——也就是說這個病在 demo 模式下本來就示範得出來。）
     const sites = productLines.filter(
       ([, line]) => line.includes(`"${cmd}"`) && line.includes("invoke"),
     );
-    check(`產品碼裡只有一個地方叫得到 ${cmd}`, sites.length === 1, sites);
+    check(`產品碼裡叫得到 ${cmd} 的地方剛好 ${want} 處`, sites.length === want, sites);
   }
-  check("而且三顆都走同一支 wrote", read(SRC).includes("function wrote(call, label, after) {"));
+  check("而且都走同一支 wrote", read(SRC).includes("function wrote(call, label, after) {"));
+  // `say` 是這一天的摘要。把一次性的失敗寫進去＝拿一句持續為真的話換一句一次性的，
+  // 而且要換一天才換得回來。唯一的例外是整天讀不起來那一支（那時本來就沒有摘要）。
+  const criers = productLines.filter(([, line]) => /say\(String\(err/u.test(line));
+  check("只有一個地方把錯誤寫進這一天的摘要", criers.length === 1, criers);
+  check(
+    "而那一個在 openDay 裡——整天讀不起來的時候本來就沒有摘要",
+    (criers[0]?.[0] ?? 0) > read(SRC).split("\n").findIndex((l) => l.includes("async function openDay(")),
+    criers[0],
+  );
 
   // 和 ⑫ 同一個理由：少了接口，rejection 在 Node 底下會直接把這支殺掉，整體是紅的
   // 而沒有任何一條斷言抓到它。真的 webview 裡沒有人會死，它只是安靜地什麼都不做。
@@ -816,6 +842,45 @@ console.log("⑬ 「改成這樣」「結案」「其他一切」寫不進去的
     model_confidence: 0.31,
     evidence: [],
   };
+  // 兩段章節：第一段才有「與下一段合併」（要有 next），有 `edit_id` 才有「撤銷這次
+  // 修改」。三顆鍵都掛 `dataset`，所以選得到。
+  const chapter = (over = {}) => ({
+    start_ts: D1 + 9 * 3_600_000,
+    end_ts: D1 + 10 * 3_600_000,
+    core_start_ts: D1 + 9 * 3_600_000,
+    core_end_ts: D1 + 10 * 3_600_000,
+    core_ms: 3_600_000,
+    segment_count: 1,
+    app: "Firefox",
+    title: "在看帳單",
+    ...over,
+  });
+  /** 成功之後後端回的那一份。刻意和 `CHAPTERS` 不同，畫面沒動就看得出來。 */
+  const MERGED = [
+    {
+      start_ts: D1 + 9 * 3_600_000,
+      end_ts: D1 + 11 * 3_600_000,
+      core_start_ts: D1 + 9 * 3_600_000,
+      core_end_ts: D1 + 11 * 3_600_000,
+      core_ms: 7_200_000,
+      segment_count: 2,
+      app: "Firefox",
+      title: "在看帳單",
+      edited: "merge",
+      edit_id: 9,
+    },
+  ];
+  const CHAPTERS = [
+    chapter({ edit_id: 5 }),
+    chapter({
+      start_ts: D1 + 10 * 3_600_000,
+      end_ts: D1 + 11 * 3_600_000,
+      core_start_ts: D1 + 10 * 3_600_000,
+      core_end_ts: D1 + 11 * 3_600_000,
+      app: "Terminal",
+      title: "在跑測試",
+    }),
+  ];
   const PLEDGE = {
     id: 77,
     text: "五點去接她",
@@ -825,6 +890,20 @@ console.log("⑬ 「改成這樣」「結案」「其他一切」寫不進去的
     tombstoned: false,
     evidence: [],
   };
+  const pressClick = (button) => async () => {
+    for (const fn of button.handlers.click ?? []) fn();
+    await tick();
+  };
+  /**
+   * 用**鍵上的字**找那顆鍵。
+   *
+   * 不用 `[data-merge]`：假瀏覽器的元素級 `querySelectorAll` 只認得 tag 和
+   * `.class`（fake-dom.mjs 那支 `matches`），屬性選擇器一律不命中，而回來的
+   * `null` 讀起來就是「這顆鍵不存在」——和 `classList` 那個盲點同一族。用字找還多
+   * 一個好處：它和底下那條「句子要指名鍵上的字」問的是同一個字串。
+   */
+  const buttonSaying = (page, where, text) =>
+    page.node(where).querySelectorAll("button").find((b) => b.textContent === text) ?? null;
   /** 換到上面那排的某一頁。走法和 ⑨ 的 `openOutbound` 一樣。 */
   const goTo = async (page, name) => {
     const btn = { getAttribute: (k) => (k === "data-view" ? name : null) };
@@ -876,6 +955,44 @@ console.log("⑬ 「改成這樣」「結案」「其他一切」寫不進去的
         };
       },
     },
+    "章節上的「與下一段合併」": {
+      cmd: "timeline_merge_chapters",
+      reread: "timeline_chapters",
+      async open(result) {
+        const page = await open({
+          timeline_chapters: CHAPTERS,
+          timeline_merge_chapters: result === null ? MERGED : result,
+        });
+        const button = buttonSaying(page, "[data-moments]", "與下一段合併");
+        return { page, button, press: pressClick(button) };
+      },
+    },
+    "章節上的「撤銷這次修改」": {
+      cmd: "timeline_undo_segment_edit",
+      reread: "timeline_chapters",
+      async open(result) {
+        const page = await open({
+          timeline_chapters: CHAPTERS,
+          timeline_undo_segment_edit: result === null ? MERGED : result,
+        });
+        const button = buttonSaying(page, "[data-moments]", "撤銷這次修改");
+        return { page, button, press: pressClick(button) };
+      },
+    },
+    "章節上的「在這個時間切開」": {
+      cmd: "timeline_split_chapter",
+      reread: "timeline_chapters",
+      async open(result) {
+        const page = await open({
+          timeline_chapters: CHAPTERS,
+          timeline_split_chapter: result === null ? MERGED : result,
+        });
+        // 那一列預設是收起來的，先按「切開」把它攤開——他也是這樣按的。
+        await pressClick(buttonSaying(page, "[data-moments]", "切開"))();
+        const button = buttonSaying(page, "[data-moments]", "在這個時間切開");
+        return { page, button, press: pressClick(button) };
+      },
+    },
     "承諾那一列的「其他一切」": {
       cmd: "commitment_other",
       reread: "memory_commitments",
@@ -901,15 +1018,20 @@ console.log("⑬ 「改成這樣」「結案」「其他一切」寫不進去的
     const okRun = await d.open(null);
     check(`${name}：這顆鍵找得到`, okRun.button != null, okRun.button?.textContent);
     const before = okRun.page.calls.filter((c) => c === d.reread).length;
+    const rowsBefore = okRun.page.rows().join("|");
     await okRun.press();
     check(`${name}：真的寫出去了`, okRun.page.calls.includes(d.cmd), okRun.page.calls);
     check(`${name}：寫成功不多嘴`, !okRun.page.say().includes("沒做成"), okRun.page.say());
-    // 成功那一臂要重讀。少了這一條，把 `after()` 整個拿掉也是綠的，而畫面上那一列
-    // 就永遠停在他按之前的樣子——和失敗長得一模一樣。
+    // 成功那一臂要讓畫面動。少了這一條，把 `after()` 整個拿掉也是綠的，而畫面上那一
+    // 列就永遠停在他按之前的樣子——和失敗長得一模一樣。承諾／猜測那三顆是再問一次
+    // 後端；章節那三顆是拿回傳的那份章節直接重畫（所以數「又讀了一次」對它們永遠
+    // 是假的，要數畫面上那幾列有沒有換過）。
     check(
-      `${name}：寫完了要重讀一次`,
-      okRun.page.calls.filter((c) => c === d.reread).length > before,
-      okRun.page.calls,
+      `${name}：寫完了畫面要跟著動`,
+      d.reread === "timeline_chapters"
+        ? okRun.page.rows().join("|") !== rowsBefore
+        : okRun.page.calls.filter((c) => c === d.reread).length > before,
+      [okRun.page.calls, okRun.page.rows()],
     );
 
     const bad = await d.open(new Error(BOOM));
@@ -924,7 +1046,7 @@ console.log("⑬ 「改成這樣」「結案」「其他一切」寫不進去的
       [said, bad.button.textContent],
     );
     // 「沒做成」聽起來像慢了一點。要講的是它**沒有發生**。
-    check(`${name}：明講這一筆沒有變`, said.includes("還是原來的樣子"), said);
+    check(`${name}：明講什麼都沒有改到`, said.includes("什麼都沒有改到"), said);
     check(`${name}：而且照抄 Rust 給的理由`, said.includes(BOOM), said);
     check(`${name}：沒有蓋掉這一天的摘要`, !bad.page.sub().includes("沒做成"), bad.page.sub());
 
@@ -949,7 +1071,7 @@ console.log("⑬ 「改成這樣」「結案」「其他一切」寫不進去的
   check("沒有任何一次寫入的錯掉在地上", onFloor.length === 0, onFloor);
   process.off("unhandledRejection", onDropped);
 
-  /* 這一節抓不到什麼，講清楚——兩條都拿 `want=綠` 的刀量過，不是推出來的：
+  /* 這一節抓不到什麼，講清楚——三條都拿 `want=綠` 的刀量過，不是推出來的：
    *
    *   一、**它不看送出去的內容**。把 `activity: next` 換成 `activity: ""`（他打的
    *   那句話整個丟掉，而 invoke 照樣成功）這一節照樣綠。它守的是「失敗的時候畫面
@@ -958,7 +1080,12 @@ console.log("⑬ 「改成這樣」「結案」「其他一切」寫不進去的
    *   二、**換頁不會把那句話收掉**。按了「結案」失敗、再切到「外送」那一頁，那句
    *   紅字還留在底下——`setView` 裡沒有 `tell("")`（`openDay` 和那兩個時間輸入框才
    *   有）。那句話這時候仍然是真的（那一筆確實沒寫進去），所以我沒動它；但這一節
-   *   從來沒換過頁，在 `setView` 裡補一行 `tell("")` 它也是綠的。 */
+   *   從來沒換過頁，在 `setView` 裡補一行 `tell("")` 它也是綠的。
+   *
+   *   三、**分鐘級那兩顆鍵（`pieceRow` 裡的合併／撤銷）沒有被按過**。它們和活動級
+   *   那兩顆共用 `runChapterEdit`，所以上面第一層數得到它們（那兩個指令各要 2 處）；
+   *   但「按下去真的說了話」在這裡只驗過活動級那一份。把 `pieceRow` 裡那兩顆的
+   *   click handler 整個拿掉，這一節照樣綠。 */
 }
 
 console.log("");

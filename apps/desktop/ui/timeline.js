@@ -134,7 +134,8 @@ function openFrame(frameId) {
 }
 
 /**
- * 「改成這樣」「結案」「其他一切」——這一頁三顆會**寫進資料庫**的鍵共用的唯一一條路。
+ * 這一頁每一顆會**寫進資料庫**的鍵共用的唯一一條路：「改成這樣」「結案」「其他一切」
+ * 「與下一段合併」「在這個時間切開」「撤銷這次修改」。
  *
  * 和上面那支 `openFrame` 是同一個病的另一半，而後果重得多。`open_frame` 開不起來，
  * 頂多是他沒看到那張圖；這三顆失敗的時候資料庫裡**一個字都沒變**，而畫面和成功
@@ -149,9 +150,11 @@ function openFrame(frameId) {
  *
  * 句子要帶他剛剛按的那顆鍵的**字面**：`tell` 只有一格，這一頁好幾顆鍵共用它
  *（「看當時的畫面」「忘掉這一整天」都在寫），不指名是哪一顆，那句話就沒有主詞。
- * 也要明講「這一筆還是原來的樣子」——只說「沒做成」聽起來像慢了一點，而要講的是
- * 它**沒有發生**。理由照抄 Rust 的原話，和 `openFrame` 那邊同一條紀律：資料庫鎖住、
- * 磁碟滿了、那一列已經被忘掉了，只有它分得出來，這一頁不准自己編一個。
+ * 也要明講「什麼都沒有改到」——只說「沒做成」聽起來像慢了一點，而要講的是它
+ * **沒有發生**。（`380e07a` 這半句本來寫「這一筆還是原來的樣子」，那是只服務三顆鍵
+ * 時寫的；章節那三顆改的不是「一筆」是兩段，同一句話在它們身上是錯的，所以換成
+ * 六顆都成立的說法。）理由照抄 Rust 的原話，和 `openFrame` 那邊同一條紀律：資料庫
+ * 鎖住、磁碟滿了、那一列已經被忘掉了，只有它分得出來，這一頁不准自己編一個。
  *
  * 成功那一臂先 `tell("")`。他按第二次成功了，上一句失敗的話不收掉的話，會和那一列
  * 已經消失的承諾同時留在畫面上，而它這時候是假的。換天和改時間範圍會清（`openDay`
@@ -159,12 +162,12 @@ function openFrame(frameId) {
  */
 function wrote(call, label, after) {
   void call?.then?.(
-    () => {
+    (value) => {
       tell("");
-      void after();
+      void after(value);
     },
     (err) => {
-      tell(`「${label}」沒做成，這一筆還是原來的樣子：${String(err?.message ?? err)}`, true);
+      tell(`「${label}」沒做成，什麼都沒有改到：${String(err?.message ?? err)}`, true);
     },
   );
 }
@@ -540,14 +543,18 @@ async function applyChapters(chapters) {
   paint(lastView, current, Date.now(), chapters);
 }
 
-async function runChapterEdit(work) {
+/**
+ * 章節那三顆鍵（合併／切開／撤銷）走的那一段。
+ *
+ * 這裡以前自己 `catch`，然後 `say(錯誤字串, true)`——而 `say` 那一格是**這一天的
+ * 摘要**（「5 段・312 筆・09:12–18:40」）。一次按壞，那句持續為真的話就被一段
+ * 沒有主詞的 Rust 錯誤蓋掉，而且要換一天才回得來。上面那段 doc 花了一整段說為什麼
+ * 不可以這樣，然後這三顆鍵——比它早出貨——一直在這樣做。族規要寫成橫的，第一版就
+ * 把既有的成員全接上跑，不然紅的永遠只有新來的那幾顆。
+ */
+function runChapterEdit(label, work) {
   if (invoke === null || current === null) return;
-  try {
-    const chapters = await work();
-    await applyChapters(chapters);
-  } catch (err) {
-    say(String(err?.message ?? err), true);
-  }
+  wrote(work(), label, (chapters) => applyChapters(chapters));
 }
 
 function chapterRow(ch, rows, dayStart, next) {
@@ -599,7 +606,7 @@ function chapterRow(ch, rows, dayStart, next) {
       const bounds = dayBounds();
       if (bounds === null) return;
       const cores = mergeCores(ch, next);
-      void runChapterEdit(() =>
+      void runChapterEdit(merge.textContent, () =>
         invoke("timeline_merge_chapters", {
           leftCoreStart: cores.left,
           rightCoreStart: cores.right,
@@ -623,7 +630,7 @@ function chapterRow(ch, rows, dayStart, next) {
     undo.addEventListener("click", () => {
       const bounds = dayBounds();
       if (bounds === null) return;
-      void runChapterEdit(() =>
+      void runChapterEdit(undo.textContent, () =>
         invoke("timeline_undo_segment_edit", {
           editId: ch.edit_id,
           fromTs: bounds.fromTs,
@@ -651,7 +658,7 @@ function chapterRow(ch, rows, dayStart, next) {
     const bounds = dayBounds();
     if (bounds === null || current === null) return;
     const at = current.start_ts + offsetOf(splitAt.value, mid - current.start_ts);
-    void runChapterEdit(() =>
+    void runChapterEdit(splitGo.textContent, () =>
       invoke("timeline_split_chapter", {
         atTs: at,
         fromTs: bounds.fromTs,
@@ -837,7 +844,7 @@ function pieceRow(seg, next) {
     merge.addEventListener("click", () => {
       const bounds = dayBounds();
       if (bounds === null) return;
-      void runChapterEdit(() =>
+      void runChapterEdit(merge.textContent, () =>
         invoke("timeline_merge_chapters", {
           leftCoreStart: seg.core_start_ts,
           rightCoreStart: next.core_start_ts,
@@ -855,7 +862,7 @@ function pieceRow(seg, next) {
     undo.addEventListener("click", () => {
       const bounds = dayBounds();
       if (bounds === null) return;
-      void runChapterEdit(() =>
+      void runChapterEdit(undo.textContent, () =>
         invoke("timeline_undo_segment_edit", {
           editId: seg.edit_id,
           fromTs: bounds.fromTs,
