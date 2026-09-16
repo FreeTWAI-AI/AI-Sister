@@ -262,6 +262,121 @@ if DATA_PREFIX is not None:
             "多半是 APPDATA 這條正規表示式對不上文件現在的寫法了。",
         )
 
+# ── 答案可以引用哪幾種來源 ───────────────────────────────────────────
+#
+# 同樣的形狀，第三種：**一份文件在描述一個它不再對得上的世界。**
+#
+# `SourceRef::parse` 收三種 ref：`fact:`（regex 從 OCR 抽出來的事實）、`chunk:`
+# （當時螢幕上真的出現過的原文）、`card:`（她稍早自己寫下的判讀）。`card:` 是
+# `672248c` 加的，而 SPEC §8.2、PRODUCT.md 與 PHASES.md 的合約段落當時沒有跟著
+# 改，於是三份出貨文件一起說「來源只能是 `fact:<id>`／`chunk:<id>`」——少講的正好
+# 是**唯一一種背後沒有螢幕原文的**那一種。讀者（和下一個照著文件做事的我）會得到
+# 一個結論：每一句答案背後都有一行螢幕上真的出現過的字。那不是真的。
+#
+# 所以合法的那份名單從 `SourceRef::parse` 自己那個 `match` 推出來，不寫死：寫死的
+# 話，下一次多一種 ref、這支腳本會繼續拿舊的答案去判每一份文件都對。
+print("▶ 文件講的來源種類，和 SourceRef 收的那幾種一樣嗎")
+# 兩份名單，兩個獨立的來源，然後互相對。
+#
+# 一份從 `enum SourceRef` 的 variant 讀，一份從 `parse()` 的 match arm 讀。只讀一份的
+# 那一版寫過一個寫死的下限（「少於三種就算正規表示式壞了」），而那條判準把兩件事
+# 混成同一則訊息：**產品真的少收一種**和**我的正規表示式對不上了**。實測拿掉
+# `parse` 裡的 `card` 那一臂，它印的是「多半是那個 match 的寫法變了」——一個當場
+# 說謊的診斷。兩份互相對就不用猜：兩邊一致＝兩邊都讀懂了，不一致＝指名是哪一邊。
+KINDS = set()
+grounded = read("crates/sister-core/src/grounded_answer.rs")
+if grounded is not None:
+    enum_body = re.search(r"pub enum SourceRef \{(.*?)\n\}", grounded, re.S)
+    parse_body = re.search(r"pub fn parse\(value: &str\).*?match kind \{(.*?)\n\s*\}", grounded, re.S)
+    if enum_body is None or parse_body is None:
+        die(
+            "在 grounded_answer.rs 裡找不到 SourceRef 的 enum 或 parse",
+            f"enum={enum_body is not None} parse={parse_body is not None}",
+            "找不到就推不出合法的 ref 種類，底下那一圈會空轉。",
+        )
+    else:
+        from_enum = {v.lower() for v in re.findall(r"^\s{4}(\w+)\(i64\),", enum_body.group(1), re.M)}
+        from_parse = set(re.findall(r'"(\w+)" => Some\(Self::', parse_body.group(1)))
+        if not from_enum or from_enum != from_parse:
+            die(
+                "SourceRef 的 enum 和 parse 對不起來",
+                f"enum 有：{sorted(from_enum)}",
+                f"parse 收：{sorted(from_parse)}",
+                "只差一邊就是真的有一種 ref 沒有入口（或多了一個沒有 variant 的字），"
+                "兩邊都空就是這兩條正規表示式對不上這份原始碼了。",
+            )
+        else:
+            KINDS = from_enum
+            print(f"  產品收 {len(KINDS)} 種：{'、'.join(sorted(KINDS))}")
+
+# 對的單位是**那串清單本身**，不是行、也不是段。
+#
+# 按行看：這幾份文件都折行，同一句合約話被折成兩三行，折到第二行的那半自己「只列
+# 了一種」——我改完 SPEC 第一次跑就是這樣噴的紅，一句列全了的話被自己的解釋句判成
+# 沒列全。按段看更糟，而且是**假綠**：我在同一段裡寫了一句「`card:<id>` 是她稍早
+# 寫下的判讀」，於是把合約那句退回只剩兩種，那一段照樣集滿三種，閘門一聲不吭。
+# 實測過，這一刀本來是綠的。
+#
+# 所以抓的是 `` `a:<id>`／`b:<id>`… `` 這種用「／」串起來的**連續**清單（中間准折
+# 行）。散文裡單獨提到一種不會被挑到，因為它不是清單。
+RUN = re.compile(r"`(\w+):<id>`(?:\s*／\s*`\w+:<id>`)+")
+seen_lists = 0
+if KINDS:
+    want = "／".join(f"`{k}:<id>`" for k in sorted(KINDS))
+    for rel, lines in DOCS:
+        # RELEASE-NOTES 的版本區段是歷史：alpha.126 那一段當時真的只有兩種，
+        # 改成今天的名單才會變成假話。這一條和 check-doc-byte-counts.py 對同一份
+        # 檔案的處理是同一個理由。
+        if rel.name == "RELEASE-NOTES.md":
+            continue
+        text = "\n".join(lines)
+        for m in RUN.finditer(text):
+            seen_lists += 1
+            at = text.count("\n", 0, m.start()) + 1
+            listed = set(re.findall(r"`(\w+):<id>`", m.group(0)))
+            missing, extra = KINDS - listed, listed - KINDS
+            if not missing and not extra:
+                continue
+            detail = []
+            if missing:
+                detail.append(f"少的是：{'、'.join(sorted(missing))}")
+            if extra:
+                detail.append(f"多的是（產品收不下）：{'、'.join(sorted(extra))}")
+            # 底下那句「為什麼要緊」只對**少列**成立。兩個方向共用一句話的話，
+            # 「文件多列了一種」會被配上一段在講漏字的說明——那是這支腳本自己在做
+            # 它正在抓的那件事。
+            if "card" in missing:
+                detail.append(
+                    "少列 card: 的後果不是漏字——它是唯一一種背後沒有螢幕原文的來源，"
+                    "漏掉它，這句話就在保證一件產品沒有保證的事。"
+                )
+            elif extra:
+                detail.append("文件在保證一件產品現在做不到的事：那種 ref 送回來會被整份拒絕。")
+            die(
+                f"{rel}:{at} 那串清單列了 {len(listed)} 種來源，產品收 {len(KINDS)} 種",
+                " ".join(m.group(0).split()),
+                f"合約那句話要列完：{want}",
+                *detail,
+            )
+    print(f"  看了 {seen_lists} 串")
+    # 活體。文件改用別的寫法（`fact:123`、去掉反引號、換一個分隔符）的時候，這一圈
+    # 會一串都挑不到，而輸出和「三串都對」一模一樣。
+    if seen_lists < 3:
+        die(
+            f"只挑出 {seen_lists} 串在列來源種類，太少了",
+            "2026-09-15 量到 3 串：SPEC.md、PRODUCT.md、PHASES.md 的合約段落各一。",
+            "多半是那幾份文件改掉了 `fact:<id>`／`chunk:<id>` 這個寫法。",
+        )
+
+# 這一圈抓不到什麼：
+#   - **只認 `x:<id>` 這個佔位符寫法。** 散文裡寫「fact 和 chunk 兩種」、或者
+#     舉具體例子（`card:41`）都不會被挑到。挑佔位符是刻意的——那是合約段落的
+#     寫法，而具體例子在歷史區段裡本來就該原封不動。
+#   - **沒有用「／」串起來的就不算清單。** 一句合約話如果只寫了 `fact:<id>` 一種、
+#     或者改用頓號分隔，這裡看不見它。
+#   - **它只問「列全了嗎」，不問旁邊那句解釋對不對。** 把「`card:` 是她稍早的
+#     判讀」改成「`card:` 是另一種螢幕原文」照樣綠。
+
 print()
 if failed:
     sys.exit(1)

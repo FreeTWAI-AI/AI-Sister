@@ -169,7 +169,8 @@ binary 跑過，並證明既有資料與 migration 都不丟。自動 updater �
   prompt cache 或另一份永久記憶。零命中時 CLI 仍已處理並規劃這題，但不生成無來源答案。
 - 只接受 1–6 句 strict JSON；簡單事實維持短答，需要交代前因後果時才展開；每句最多
   320 字，而且每句至少引用一個這輪真的提供的
-  `fact:<id>`／`chunk:<id>`。native 與 renderer 都把 ref 對回同一份本機結果；任一不一致就
+  `fact:<id>`／`chunk:<id>`／`card:<id>`（前兩種是螢幕原文，`card:` 是她稍早自己寫下的
+  判讀）。native 與 renderer 都把 ref 對回同一份本機結果；任一不一致就
   捨棄整份成句，原 facts／原文列表仍完整呈現。
 - 每個非空新問題都會取消舊回答；Unix process group／Windows Job tree
   一起終止。舊回覆、停止後才回來的回覆與 presentation boundary 外的回覆都不能畫或朗讀。
