@@ -2306,6 +2306,125 @@ console.log("56e. 一句判讀的出處說得出它是判讀");
   }
 }
 
+console.log("56h. 沒有圖、又沒有自己那一列的判讀，不可以畫成一顆按不動的鍵");
+{
+  // 出處鍵按下去只有兩條路：有圖就開圖，沒圖就捲到底下自己那一列
+  // （`data-evidence-ref`）。判讀兩條都沒有——`frames_with_image()` 會把只
+  // 簽第一張同意書（只記字、不留圖）那個人的 frame_id 濾成 null，而那是
+  // **每一筆**不是零星幾筆；`Reading` 又刻意不把文字送過來，所以畫面上根本
+  // 不存在一列可以捲過去。於是那顆鍵永遠什麼都不會發生，卻長得跟真的開得
+  // 了圖的那幾顆一模一樣。`sourceLine()` 那一行早就寫著這條規則：「看起來
+  // 能點但點了沒反應」比「看得出來不能點」差。
+  //
+  // 同一句話裡的 ★ 出處是對照組：它一樣沒有圖，但底下有自己那一列，所以
+  // 它**還是**一顆鍵。修法不可以把沒有圖的出處一律拔成死字。
+  //
+  // 擋不住的兩條，各打過一刀 `want=綠`：
+  //
+  // 1. **樣式表**。這裡問得出那一格掛的是 `.no-frame` 不是 `.grounded-source`，
+  //    問不出 `.no-frame` 在畫面上長什麼樣。實測往 `.hit-source .no-frame`
+  //    加一行 `cursor: pointer`，這一節照樣全綠——死字又長得可以按了，而這
+  //    道閘門不會知道。字的寬度和游標形狀是要用眼睛在真機上看的。
+  // 2. **捲動那條路捲去哪**。★ 那一格「還是一顆鍵」只證明它還是鍵，沒證明
+  //    按下去看得見反應：`scrollIntoView({ block: "nearest" })` 在那一列本來
+  //    就整列露著的時候什麼都不做。實測把它改成 `center`／`auto`，這一節也
+  //    全綠。那是另一個問題，這一輪不動它。
+  const p = await open({
+    ask: answer({
+      query_id: 7008,
+      answers: [fact({ frame_id: null })],
+      readings: [{ card_id: 5, frame_id: null }],
+      synthesis: {
+        sentences: [
+          {
+            text: "你早上在追一個天氣警報。",
+            sources: [
+              { ref: "card:5", label: "我的判讀", frame_id: null },
+              { ref: "fact:9", label: "事實 #9", frame_id: null },
+            ],
+          },
+        ],
+      },
+    }),
+    recording_state: "recording",
+  });
+  await p.type("剛剛在幹嘛");
+  check(
+    "那一句還是畫得出來（沒有圖不是拒收的理由）",
+    p
+      .hits()
+      .querySelectorAll(".grounded-text")
+      .map((node) => node.textContent)
+      .join("|") === "你早上在追一個天氣警報。",
+    p.hitTexts(),
+  );
+  // 一格一格問，而且每一條只問它自己那一件事：刀切在標籤上和刀切在樣式上
+  // 要紅出不同的句子，否則「紅了」讀不出「哪裡錯了」。
+  const line = p.hits().querySelector(".grounded-sources");
+  const cells = line?.children ?? [];
+  const cell = cells.find((node) => node.textContent === "我的判讀") ?? null;
+  const classesOf = (node) => String(node?.className ?? "").split(/\s+/u);
+  check(
+    "「我的判讀」那四個字還在——那是這句話唯一說得出口的出處",
+    cell !== null,
+    cells.map((node) => node.textContent),
+  );
+  if (cell !== null) {
+    check("而那一格不是一顆鍵", cell.tag !== "button", cell.tag);
+    check(
+      "也不沿用「可以按」那個樣式",
+      !classesOf(cell).includes("grounded-source"),
+      cell.className,
+    );
+    check(
+      "用的是出處那一行講「沒有留下畫面」時的同一個樣式",
+      classesOf(cell).includes("no-frame"),
+      cell.className,
+    );
+  }
+  const pressable = line?.querySelectorAll("button") ?? [];
+  check(
+    "★ 那一格一樣沒有圖，可是還是一顆鍵（它捲得到底下自己那一列）",
+    pressable.some((node) => node.textContent === "事實 #9"),
+    pressable.map((node) => node.textContent),
+  );
+  // 上面那條的前提：★ 按下去捲得到的那一列真的存在。少了這一條，「還是一
+  // 顆鍵」守的可能是另一顆一樣按不動的鍵。
+  const refs = p
+    .hits()
+    .querySelectorAll("li")
+    .map((node) => node.dataset.evidenceRef)
+    .filter(Boolean);
+  check("而底下那一列真的掛著 fact:9", refs.includes("fact:9"), refs);
+  check("判讀沒有自己那一列（所以上面那格才無處可去）", !refs.includes("card:5"), refs);
+}
+
+console.log("56h-src. 「底下有自己那一列」這句話，兩邊要對得起來");
+{
+  // 上面那一節守的是今天的行為，這一節守的是它的前提不會被單邊改掉：哪天
+  // 有人給判讀也掛一列 `data-evidence-ref`，`row: false` 就變成假話，那一格
+  // 會永遠是死字；反過來拿掉原文那一列，`row: true` 也會變成一顆真的按不動
+  // 的鍵。兩份名單各自從產品的不同地方讀出來，誰先動都會被抓到。
+  const src = read(join(UI, "app.js"));
+  const head = src.indexOf("const sourceTarget = (reference) =>");
+  const target = src.slice(head, src.indexOf("for (const sentence of synthesis.sentences)", head));
+  const arms = [...target.matchAll(/reference\.startsWith\("(\w+):"\)/g)];
+  const withRow = new Set();
+  for (const [i, arm] of arms.entries()) {
+    const end = arms[i + 1]?.index ?? target.length;
+    if (target.slice(arm.index, end).includes("row: true")) withRow.add(arm[1]);
+  }
+  const rows = new Set([...src.matchAll(/dataset\.evidenceRef = `(\w+):/g)].map((m) => m[1]));
+  // 活體：兩支正規表示式挑不到東西的話，底下那條比較永遠是「空 === 空」。
+  check(`sourceTarget 三種出處都掃到了（${arms.length}）`, arms.length === 3, arms.map((m) => m[1]));
+  check(`data-evidence-ref 真的掃到了（${rows.size} 種）`, rows.size >= 2, [...rows]);
+  check(
+    "說得出「底下有自己那一列」的那幾種，就是真的掛著 data-evidence-ref 的那幾種",
+    [...withRow].sort().join(",") === [...rows].sort().join(","),
+    { row: [...withRow].sort(), evidenceRef: [...rows].sort() },
+  );
+}
+
 console.log("56f. 引用一張這一題沒送出去的判讀，整份拒絕");
 {
   const p = await open({

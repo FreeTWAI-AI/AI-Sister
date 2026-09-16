@@ -5290,18 +5290,27 @@ function renderGrounded(synthesis, readings, facts, hits, queryId) {
     throw new Error("成句答案必須是 1 到 6 句");
   }
 
+  /**
+   * 這個出處指到哪一筆，以及它在畫面上有沒有自己那一列。
+   *
+   * `row` 講的是底下那幾列身上的 `data-evidence-ref`：★ 和原文每一筆都
+   * 掛著一個（見底下那兩個迴圈），判讀沒有——`Reading` 刻意不把文字送過
+   * 來，所以畫面上根本不存在一列可以捲過去。出處鍵沒有圖可以開的時候就
+   * 只剩那條捲動的路，所以這個欄位決定的是「這顆鍵按下去到底還有沒有事
+   * 會發生」。
+   */
   const sourceTarget = (reference) => {
     if (reference.startsWith("fact:")) {
       const id = Number(reference.slice("fact:".length));
       const index = facts.findIndex((fact) => fact.fact_id === id);
-      return index < 0 ? null : { item: facts[index], rank: index };
+      return index < 0 ? null : { item: facts[index], rank: index, row: true };
     }
     if (reference.startsWith("chunk:")) {
       const id = Number(reference.slice("chunk:".length));
       const index = hits.findIndex((hit) => hit.chunk_id === id);
       return index < 0
         ? null
-        : { item: hits[index], rank: facts.length + index };
+        : { item: hits[index], rank: facts.length + index, row: true };
     }
     if (reference.startsWith("card:")) {
       // 她自己想過的那一段。**沒有 rank**：這一筆不是檢索排出來的，它是一
@@ -5310,7 +5319,9 @@ function renderGrounded(synthesis, readings, facts, hits, queryId) {
       // 某一版變成「他點的是第一名」那種假資料。
       const id = Number(reference.slice("card:".length));
       const index = readings.findIndex((reading) => reading.card_id === id);
-      return index < 0 ? null : { item: readings[index], rank: null };
+      return index < 0
+        ? null
+        : { item: readings[index], rank: null, row: false };
     }
     return null;
   };
@@ -5350,13 +5361,34 @@ function renderGrounded(synthesis, readings, facts, hits, queryId) {
       if (sourceFrame !== targetFrame) {
         throw new Error(`成句答案的 ${source.ref} 畫面來源不一致`);
       }
+      // 「看起來能點但點了沒反應」比「看得出來不能點」差——出處那一行
+      // （`sourceLine()`）早就照這條規則寫了，而這裡漏掉了判讀。
+      //
+      // 這顆鍵按下去只有兩條路：有圖就開圖，沒圖就捲到底下自己那一列。
+      // 判讀兩條都沒有。`frame_id` 是後端拿 `frames_with_image()` 濾過的，而
+      // 只簽第一張同意書（只記字、不留圖）的人是**每一筆**都被濾掉，不是
+      // 零星幾筆；判讀又沒有自己那一列。於是那顆鍵永遠什麼都不會發生，而
+      // 它長得跟真的開得了圖的那幾顆一模一樣。
+      //
+      // 所以不畫成鍵：同一個標籤，用出處那一行說「沒有留下畫面」時的同一
+      // 個樣式（`.no-frame`，斜體、暗一點）。標籤本身不可以省掉——「這句是
+      // 我判斷的」是這一版對這句話唯一說得出口的出處。
+      const openable = Number.isSafeInteger(targetFrame) && targetFrame > 0;
+      if (!openable && !target.row) {
+        const said = document.createElement("span");
+        said.className = "no-frame";
+        said.textContent = source.label;
+        sourceLine.append(said);
+        continue;
+      }
+
       const button = document.createElement("button");
       button.type = "button";
       button.className = "grounded-source";
       button.textContent = source.label;
       button.addEventListener("click", (event) => {
         if (event?.isTrusted !== true) return;
-        if (Number.isSafeInteger(targetFrame) && targetFrame > 0) {
+        if (openable) {
           openFrame(targetFrame);
           if (
             queryId !== null &&
