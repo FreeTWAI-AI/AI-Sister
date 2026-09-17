@@ -905,10 +905,65 @@ mod tests {
         }
     }
 
+    /// 讀 durable intent，但不把「這一拍剛好有人在寫」當成答案。
+    ///
+    /// [`stop_intent`] 和 [`consent_revoke_barrier`] 都是**不排隊**的觀測：
+    /// `try_shared` 拿不到鎖就回 `Uncheckable`。那是產品要的行為（worker 不能
+    /// 排在 writer 後面等，否則 queue 裡到期的 retry 會搶在 Quit 前面 spawn），
+    /// 可是這些測試想斷言的是「durable intent 現在是什麼」，不是「這一拍有沒有
+    /// 人在寫」。
+    ///
+    /// 整支 923 條一起跑的時候那個差別會咬人：同一時刻有六七支 control 測試各自
+    /// 握著自己那把 exclusive `stop.lock`（`/proc/locks` 印得出來），於是這些
+    /// assert 會隨機讀到 `Uncheckable`——實測 **23 輪紅 6 輪**，而 `control::`
+    /// 模組單獨跑（平行、單執行緒各 40 輪）一次都不紅。單獨跑全綠只證明成因不在
+    /// 模組內部。
+    ///
+    /// 重讀是**有界**的，而且回傳最後一次真的讀到的值：產品要是真的一直回
+    /// `Uncheckable`（例如有人把鎖漏著沒放），重讀 200 次還是 `Uncheckable`，
+    /// 那條 assert 照樣會紅。所以這不是把眼睛閉上。
+    ///
+    /// 想斷言「競爭當下就是讀不到」的那幾支不走這裡：故意製造競爭的那一支、
+    /// 以及 marker 被換成目錄或 symlink 的那幾支，仍然直接呼叫原函式。
+    ///
+    /// 五刀量過（`want` 都對上了）：把 `stop_intent` 打成永遠回 `Uncheckable`
+    /// → 紅 16 支；把 `try_lock_shared` 打成永遠拿不到鎖 → 紅 18 支；把觀測改成
+    /// blocking 的 `acquire` → **只**紅那支沒被換掉的「不排隊」測試；只改註解
+    /// → 綠。
+    ///
+    /// **擋不住的一條**（也量過，`want=綠`）：寫入端把鎖多握 50ms，整支照樣全綠。
+    /// 重讀上限是 200ms，所以這裡看不出「鎖握得比以前久」這種退步——那是另一種
+    /// 問題，要量的是持有時間本身，不是讀得到讀不到。
+    fn settled<T>(read: impl Fn() -> T, done: impl Fn(&T) -> bool) -> T {
+        let mut last = read();
+        for _ in 0..200 {
+            if done(&last) {
+                return last;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+            last = read();
+        }
+        last
+    }
+
+    fn settled_intent(data_dir: &Path) -> StopIntent {
+        settled(
+            || stop_intent(data_dir),
+            |seen| *seen != StopIntent::Uncheckable,
+        )
+    }
+
+    fn settled_barrier(data_dir: &Path) -> ConsentRevokeBarrier {
+        settled(
+            || consent_revoke_barrier(data_dir),
+            |seen| *seen != ConsentRevokeBarrier::Uncheckable,
+        )
+    }
+
     #[test]
     fn nobody_asked_is_distinct_from_an_uncheckable_probe() {
         let absent = Tmp::new("none");
-        assert_eq!(stop_intent(&absent.0), StopIntent::Absent);
+        assert_eq!(settled_intent(&absent.0), StopIntent::Absent);
         assert!(!take_stop(&absent.0).expect("absent control is checkable"));
 
         let broken = Tmp::new("unknown");
@@ -929,7 +984,7 @@ mod tests {
             "requested"
         );
         assert_eq!(
-            stop_intent(&t.0),
+            settled_intent(&t.0),
             StopIntent::Pending(StopReason::Requested)
         );
         assert_eq!(
@@ -937,7 +992,7 @@ mod tests {
             Some(StopReason::Requested)
         );
         assert_eq!(
-            stop_intent(&t.0),
+            settled_intent(&t.0),
             StopIntent::Consumed(StopReason::Requested)
         );
         assert_eq!(
@@ -971,7 +1026,7 @@ mod tests {
             Some(StopReason::Requested)
         );
         clear_stop_intent(&t.0).expect("explicit clear");
-        assert_eq!(stop_intent(&t.0), StopIntent::Absent);
+        assert_eq!(settled_intent(&t.0), StopIntent::Absent);
     }
 
     #[test]
@@ -990,7 +1045,7 @@ mod tests {
         );
         drop(guard);
         assert_eq!(
-            stop_intent(&t.0),
+            settled_intent(&t.0),
             StopIntent::Pending(StopReason::Requested),
             "lease/heartbeat preflight failure must preserve the old marker"
         );
@@ -999,7 +1054,7 @@ mod tests {
             .expect("retry explicit start")
             .clear()
             .expect("commit clear");
-        assert_eq!(stop_intent(&t.0), StopIntent::Absent);
+        assert_eq!(settled_intent(&t.0), StopIntent::Absent);
     }
 
     #[test]
@@ -1025,7 +1080,7 @@ mod tests {
             "contention is uncertainty, never an invented Absent"
         );
         assert_eq!(
-            stop_intent(&t.0),
+            settled_intent(&t.0),
             StopIntent::Pending(StopReason::Requested),
             "observation contention must not mutate the marker"
         );
@@ -1045,7 +1100,7 @@ mod tests {
         );
         drop(writer);
         assert_eq!(
-            stop_intent(&t.0),
+            settled_intent(&t.0),
             StopIntent::Pending(StopReason::Requested),
             "the failed try must preserve the durable marker"
         );
@@ -1055,16 +1110,16 @@ mod tests {
             .expect("released writer makes the transaction available")
             .clear()
             .expect("committed explicit start clears the old marker");
-        assert_eq!(stop_intent(&t.0), StopIntent::Absent);
+        assert_eq!(settled_intent(&t.0), StopIntent::Absent);
     }
 
     #[test]
     fn consent_revoke_keeps_its_reason_through_consumption_and_db_mapping() {
         let t = Tmp::new("consent");
         request_consent_revoke(&t.0).expect("revoke");
-        assert_eq!(consent_revoke_barrier(&t.0), ConsentRevokeBarrier::Present);
+        assert_eq!(settled_barrier(&t.0), ConsentRevokeBarrier::Present);
         assert_eq!(
-            stop_intent(&t.0),
+            settled_intent(&t.0),
             StopIntent::Pending(StopReason::ConsentRevoked)
         );
         let reason = consume_stop(&t.0)
@@ -1076,7 +1131,7 @@ mod tests {
             crate::model::EndReason::ConsentRevoked
         );
         assert_eq!(
-            stop_intent(&t.0),
+            settled_intent(&t.0),
             StopIntent::Pending(StopReason::ConsentRevoked),
             "recorder only observes the barrier; it cannot consume or delete it"
         );
@@ -1108,7 +1163,7 @@ mod tests {
         let plain = Tmp::new("desktop-quit-vs-stop");
         request_desktop_quit(&plain.0).expect("desktop quit");
         assert_eq!(
-            stop_intent(&plain.0),
+            settled_intent(&plain.0),
             StopIntent::Pending(StopReason::DesktopQuit)
         );
         assert_eq!(
@@ -1122,7 +1177,7 @@ mod tests {
         request_stop(&plain.0).expect("later manual stop");
         request_desktop_quit(&plain.0).expect("quit cannot downgrade manual stop");
         assert_eq!(
-            stop_intent(&plain.0),
+            settled_intent(&plain.0),
             StopIntent::Pending(StopReason::Requested)
         );
 
@@ -1130,7 +1185,7 @@ mod tests {
         request_consent_revoke(&revoke.0).expect("revoke");
         request_desktop_quit(&revoke.0).expect("quit cannot downgrade revoke");
         assert_eq!(
-            stop_intent(&revoke.0),
+            settled_intent(&revoke.0),
             StopIntent::Pending(StopReason::ConsentRevoked)
         );
     }
@@ -1145,7 +1200,7 @@ mod tests {
         );
         request_stop(&t.0).expect("plain stop");
         assert_eq!(
-            stop_intent(&t.0),
+            settled_intent(&t.0),
             StopIntent::Pending(StopReason::ConsentRevoked),
             "the active barrier is the visible reason until a regrant commits"
         );
@@ -1162,7 +1217,7 @@ mod tests {
             ConsentRevokeBarrierClear::Cleared
         );
         assert_eq!(
-            stop_intent(&t.0),
+            settled_intent(&t.0),
             StopIntent::Pending(StopReason::Requested),
             "successful regrant clears only the barrier, never the manual stop"
         );
@@ -1174,7 +1229,7 @@ mod tests {
         request_stop(&t.0).expect("plain stop");
         request_consent_revoke(&t.0).expect("revoke");
         assert_eq!(
-            stop_intent(&t.0),
+            settled_intent(&t.0),
             StopIntent::Pending(StopReason::ConsentRevoked)
         );
         assert_eq!(
@@ -1212,7 +1267,7 @@ mod tests {
                 ticket.clear_after_commit().expect("clear after regrant"),
                 ConsentRevokeBarrierClear::Cleared
             );
-            assert_eq!(stop_intent(&t.0), expected);
+            assert_eq!(settled_intent(&t.0), expected);
             assert_eq!(
                 std::fs::read(stop_path(&t.0)).expect("ordinary marker survives"),
                 before,
@@ -1237,7 +1292,7 @@ mod tests {
             ConsentRevokeBarrierClear::Cleared
         );
         assert_eq!(
-            stop_intent(&consumed.0),
+            settled_intent(&consumed.0),
             StopIntent::Consumed(StopReason::Requested)
         );
         assert_eq!(
@@ -1259,9 +1314,9 @@ mod tests {
             ticket.clear_after_commit().expect("successful regrant"),
             ConsentRevokeBarrierClear::Cleared
         );
-        assert_eq!(consent_revoke_barrier(&t.0), ConsentRevokeBarrier::Absent);
+        assert_eq!(settled_barrier(&t.0), ConsentRevokeBarrier::Absent);
         assert_eq!(
-            stop_intent(&t.0),
+            settled_intent(&t.0),
             StopIntent::Pending(StopReason::ConsentRevoked),
             "regrant is permission, not cancellation of the stop already requested"
         );
@@ -1280,7 +1335,7 @@ mod tests {
             .expect("barrier present");
         std::fs::remove_file(consent_revoke_barrier_path(&t.0))
             .expect("simulate external pathname removal");
-        assert_eq!(stop_intent(&t.0), StopIntent::Absent);
+        assert_eq!(settled_intent(&t.0), StopIntent::Absent);
 
         assert_eq!(
             ticket
@@ -1289,7 +1344,7 @@ mod tests {
             ConsentRevokeBarrierClear::AlreadyAbsent
         );
         assert_eq!(
-            stop_intent(&t.0),
+            settled_intent(&t.0),
             StopIntent::Pending(StopReason::ConsentRevoked)
         );
     }
@@ -1315,7 +1370,7 @@ mod tests {
             newer
         );
         assert_eq!(
-            stop_intent(&t.0),
+            settled_intent(&t.0),
             StopIntent::Pending(StopReason::ConsentRevoked)
         );
     }
@@ -1323,10 +1378,7 @@ mod tests {
     #[test]
     fn missing_and_unreadable_revoke_barriers_are_distinct_and_fail_closed() {
         let missing = Tmp::new("barrier-missing");
-        assert_eq!(
-            consent_revoke_barrier(&missing.0),
-            ConsentRevokeBarrier::Absent
-        );
+        assert_eq!(settled_barrier(&missing.0), ConsentRevokeBarrier::Absent);
         assert!(
             prepare_consent_revoke_barrier_clear(&missing.0)
                 .expect("missing is checkable")
@@ -1392,7 +1444,7 @@ mod tests {
             std::fs::read_to_string(stop_path(&t.0)).expect("manual marker was not cleared"),
             "requested"
         );
-        assert_eq!(consent_revoke_barrier(&t.0), ConsentRevokeBarrier::Present);
+        assert_eq!(settled_barrier(&t.0), ConsentRevokeBarrier::Present);
     }
 
     #[test]
@@ -1400,7 +1452,7 @@ mod tests {
         let t = Tmp::new("legacy");
         std::fs::write(stop_path(&t.0), "stop").expect("legacy marker");
         assert_eq!(
-            stop_intent(&t.0),
+            settled_intent(&t.0),
             StopIntent::Pending(StopReason::Requested)
         );
         assert_eq!(
@@ -1613,7 +1665,7 @@ mod tests {
             .expect("request thread")
             .expect("request");
         assert_eq!(
-            stop_intent(&t.0),
+            settled_intent(&t.0),
             StopIntent::Pending(StopReason::Requested),
             "the later request must not be erased by the overlapping clear"
         );
