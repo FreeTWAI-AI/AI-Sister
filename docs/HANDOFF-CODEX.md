@@ -220,7 +220,16 @@ CI run `35523335448` 的 Windows 原生 PDF／Edge HTML／WPF 案例通過：PDF
 系統活動、剪貼簿與輸入仍由測試替身提供。PDF 就緒檢查只讀直接父文件，避免探查外層
 文字介面卡住。定點回歸先紅後綠，本機 workspace 2,011 通過／0 失敗／3 忽略；
 Windows root／desktop 編譯與 lint、同意／網路／鍵盤隱私檢查通過。
-下一刀：WPF 文件捲動的真截圖／OCR／RAG 對齊。
+WPF 文件的真截圖取證見下。
+
+**同日 WPF 文件真截圖取證（未發版）：** 新增原生回歸，使用自有 WPF 唯讀文件與
+正式 GDI／Windows OCR／UIA，核對捲動前後的 SQLite 文字、存檔 PNG 再辨識及 RAG。
+上下兩支電話各自對回同次幀；OCR 與 assistive 來源均保留正確視窗標題，且不帶瀏覽器
+網址。暫停時抓圖／OCR／UIA 呼叫數不增加，恢復後可錄製；一般捲動後只讀可見新段落，
+密碼欄仍拒絕擷取。系統活動、剪貼簿與輸入使用測試替身。
+CI run `35529804355` 的 WPF／Edge HTML／PDF 原生案例通過；本機 workspace 2,011
+通過／0 失敗／3 忽略，Windows root／desktop 編譯與 lint、同意／網路／鍵盤隱私檢查通過。
+下一刀：將這批 OCR／UIA 取證改動收進下一版 Windows 安裝包。
 
 
 ---
