@@ -106,6 +106,11 @@ fn assistive_only_text_reaches_rag_with_its_own_png_and_survives_reopen_then_for
         Tick::Kept { frame_id, .. } => frame_id,
         other => panic!("{other:?}"),
     };
+    assert_eq!(rec.timings().assistive.calls, 1);
+    assert_eq!(rec.timings().focus_check.calls, 3);
+    let ranked = rec.timings().ranked();
+    assert!(ranked.iter().any(|(label, _)| *label == "輔助讀字"));
+    assert!(ranked.iter().any(|(label, _)| *label == "脈絡核對"));
     let got = RetrievalProfile::TextAndFacts
         .retrieve(rec.db_mut(), "phone", 10)
         .unwrap();
@@ -187,6 +192,7 @@ fn blocked_context_disabled_capture_and_disabled_assistive_never_call_the_source
         })
         .unwrap();
         assert_eq!(calls.get(), 0, "case {case}");
+        assert_eq!(rec.timings().assistive.calls, 0, "case {case}");
         assert!(rec.db().search("receipt", 10).unwrap().is_empty());
     }
 }
@@ -218,6 +224,12 @@ fn pause_or_context_change_during_assistive_read_discards_text_and_frame() {
             }
         );
         assert_eq!(calls.get(), 1);
+        assert_eq!(
+            rec.timings().assistive.calls,
+            1,
+            "discarded reads still cost time"
+        );
+        assert_eq!(rec.timings().focus_check.calls, if change { 3 } else { 2 });
         assert!(rec.db().search("receipt", 10).unwrap().is_empty());
         let frames: i64 = rec
             .db()

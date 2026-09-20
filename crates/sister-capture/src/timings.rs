@@ -67,6 +67,10 @@ pub struct Timings {
     pub system_poll: Stage,
     /// 問前景視窗是誰（含 UIA 的跨程序往返）。
     pub focus: Stage,
+    /// Recorder 在內容來源之間重驗擷取許可；來源內部的重驗仍歸該來源。
+    pub focus_check: Stage,
+    /// 嘗試讀取輔助文字，含來源內部的前後許可核對；不代表一定讀到文字。
+    pub assistive: Stage,
     /// 讀剪貼簿。**每個 tick 都付**，而且是一次跨程序的 Win32 往返。
     pub clipboard: Stage,
     /// 收輸入節奏計數（不含內容）。
@@ -96,6 +100,8 @@ impl Timings {
             ("全停閘門", self.master_stop),
             ("系統檢查", self.system_poll),
             ("脈絡", self.focus),
+            ("脈絡核對", self.focus_check),
+            ("輔助讀字", self.assistive),
             ("剪貼簿", self.clipboard),
             ("輸入", self.input),
             ("抓圖", self.grab),

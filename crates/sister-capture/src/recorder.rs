@@ -1682,7 +1682,7 @@ impl<B: Backend> Recorder<B> {
             }
             SystemGate::Unknown => return Ok(Tick::SystemUnknown),
         }
-        match self.backend.capture_permit_is_current(permit) {
+        match self.revalidate_capture_permit(permit) {
             Ok(true) => {}
             Ok(false) => {
                 self.seal_privacy_gap(ts);
@@ -1825,7 +1825,7 @@ impl<B: Backend> Recorder<B> {
             }
             SystemGate::Unknown => return Ok(Tick::SystemUnknown),
         }
-        match self.backend.capture_permit_is_current(permit) {
+        match self.revalidate_capture_permit(permit) {
             Ok(true) => {}
             Ok(false) => {
                 self.seal_privacy_gap(ts);
@@ -1847,7 +1847,10 @@ impl<B: Backend> Recorder<B> {
 
         // UIA 讀的是即時前景，放在慢 OCR 前，並沿用剛才核准的 permit。
         let assistive = if self.config.capture.assistive {
-            self.backend.assistive_text(permit)
+            let started = Instant::now();
+            let blocks = self.backend.assistive_text(permit);
+            self.timings.assistive.record(started.elapsed());
+            blocks
         } else {
             Vec::new()
         };
@@ -1857,7 +1860,7 @@ impl<B: Backend> Recorder<B> {
         if let Some(boundary) = pause_boundary_tick(self.observe_pause_request(pause_probe)?) {
             return Ok(boundary);
         }
-        if !self.backend.capture_permit_is_current(permit)? {
+        if !self.revalidate_capture_permit(permit)? {
             self.seal_privacy_gap(ts);
             self.stats.context_changed += 1;
             return Ok(Tick::ContextChanged);
@@ -1941,6 +1944,13 @@ impl<B: Backend> Recorder<B> {
                 &master_activity,
             ),
         }
+    }
+
+    fn revalidate_capture_permit(&mut self, permit: CapturePermit) -> Result<bool> {
+        let started = Instant::now();
+        let result = self.backend.capture_permit_is_current(permit);
+        self.timings.focus_check.record(started.elapsed());
+        result
     }
 
     fn record_ocr_measurements(
