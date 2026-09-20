@@ -39,7 +39,7 @@ try {
 const reader = document.getElementById('reader');
 window.addEventListener('load', () => { reader.focus(); document.title='Sister Edge top'; });
 window.addEventListener('keydown', event => {
-  if (event.key==='F8') { event.preventDefault(); reader.scrollTop=reader.scrollHeight; document.title='Sister Edge bottom'; }
+  if (event.key==='F8') { event.preventDefault(); reader.focus(); reader.scrollTop=reader.scrollHeight; document.title='Sister Edge bottom'; }
   if (event.key==='F9') { event.preventDefault(); document.getElementById('secret').focus(); document.title='Sister Edge password'; }
   if (event.key==='F10') { event.preventDefault(); document.getElementById('unsupported').focus(); document.title='Sister Edge group'; }
 });
@@ -124,7 +124,16 @@ window.addEventListener('keydown', event => {
                     [System.Windows.Forms.SendKeys]::SendWait('^{HOME}')
                 } else {
                     switch ($mode) {
-                        'top' { }
+                        'top' {
+                            if ($browser.MainWindowTitle.StartsWith('Sister Edge top') -and ([DateTime]::UtcNow - $activated).TotalSeconds -ge 1) {
+                                # Loading the page can focus its DOM before Edge owns
+                                # the foreground. Activate our document viewport too.
+                                [SisterEdgeWindow]::SetCursorPos(400, 250) | Out-Null
+                                [SisterEdgeWindow]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero)
+                                [SisterEdgeWindow]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)
+                                $activated = [DateTime]::UtcNow
+                            }
+                        }
                         'bottom' { [System.Windows.Forms.SendKeys]::SendWait('{F8}') }
                         'password' { [System.Windows.Forms.SendKeys]::SendWait('{F9}') }
                         'group' { [System.Windows.Forms.SendKeys]::SendWait('{F10}') }
@@ -173,6 +182,16 @@ window.addEventListener('keydown', event => {
                     [IO.File]::WriteAllText((Join-Path $StateDir 'metadata'), ($metadata -join "`n"))
                     if (-not $pageReady) {
                         if ($mode -ne 'bottom') { $sent = '' }
+                        Start-Sleep -Milliseconds 100
+                        continue
+                    }
+                } elseif ($mode -in @('top', 'bottom')) {
+                    # The title describes DOM state, not native keyboard focus.
+                    # Do not tell the test it can read while UIA still sees a Pane.
+                    $focused = [System.Windows.Automation.AutomationElement]::FocusedElement
+                    if ($focused.Current.ControlType -ne [System.Windows.Automation.ControlType]::Document -or -not $focused.Current.HasKeyboardFocus) {
+                        [IO.File]::WriteAllText((Join-Path $StateDir 'metadata'), ($metadata -join "`n"))
+                        $sent = ''
                         Start-Sleep -Milliseconds 100
                         continue
                     }
