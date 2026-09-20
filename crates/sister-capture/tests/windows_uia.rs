@@ -259,6 +259,7 @@ fn native_edge_reader_visible_paragraphs_scroll_and_privacy() {
     assert!(initial.contains("EDGE-SECOND-PARAGRAPH"));
     assert!(!initial.contains("EDGE-BOTTOM"));
     assert!(!initial.contains("HIDDEN-SENTINEL"));
+    assert!(!initial.contains("SIBLING-SENTINEL"));
     let mut recorder = browser_recorder(fixture.dir.clone());
     let top_frame = retained(recorder.tick(1000).unwrap());
 
@@ -275,6 +276,7 @@ fn native_edge_reader_visible_paragraphs_scroll_and_privacy() {
     );
     assert!(!bottom.contains("0800-333-444"));
     assert!(!bottom.contains("EDGE-SECOND-PARAGRAPH"));
+    assert!(!bottom.contains("SIBLING-SENTINEL"));
     let bottom_frame = retained(recorder.tick(2000).unwrap());
     assert_ne!(top_frame, bottom_frame);
     for (id, phone, excluded) in [

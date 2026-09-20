@@ -111,9 +111,103 @@ pub(crate) fn collect(source: &mut impl VisibleText, window: &ReadWindow) -> Vec
     out
 }
 
+// A provider can live on an enclosing document (Chromium). Intersect each
+// visible range with RangeFromChild(focused_document) before reading any text.
+#[derive(Clone, Copy)]
+pub(crate) enum TextEnd {
+    Start,
+    End,
+}
+pub(crate) trait TextRange {
+    fn compare(&self, end: TextEnd, other: &Self, other_end: TextEnd) -> Option<i32>;
+    fn move_end(&self, end: TextEnd, other: &Self, other_end: TextEnd) -> Option<()>;
+}
+pub(crate) fn clip_visible<T: TextRange>(range: &T, scope: &T) -> Option<bool> {
+    use TextEnd::{End, Start};
+    if range.compare(End, scope, Start)? <= 0 || range.compare(Start, scope, End)? >= 0 {
+        return Some(false);
+    }
+    if range.compare(Start, scope, Start)? < 0 {
+        range.move_end(Start, scope, Start)?;
+    }
+    if range.compare(End, scope, End)? > 0 {
+        range.move_end(End, scope, End)?;
+    }
+    Some(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct Range {
+        start: std::cell::Cell<usize>,
+        end: std::cell::Cell<usize>,
+        available: bool,
+    }
+    impl Range {
+        fn new(start: usize, end: usize) -> Self {
+            Self {
+                start: start.into(),
+                end: end.into(),
+                available: true,
+            }
+        }
+        fn endpoint(&self, end: TextEnd) -> &std::cell::Cell<usize> {
+            match end {
+                TextEnd::Start => &self.start,
+                TextEnd::End => &self.end,
+            }
+        }
+        fn text<'a>(&self, page: &'a str) -> &'a str {
+            &page[self.start.get()..self.end.get()]
+        }
+    }
+    impl TextRange for Range {
+        fn compare(&self, end: TextEnd, other: &Self, other_end: TextEnd) -> Option<i32> {
+            self.available.then(|| {
+                self.endpoint(end)
+                    .get()
+                    .cmp(&other.endpoint(other_end).get()) as i32
+            })
+        }
+        fn move_end(&self, end: TextEnd, other: &Self, other_end: TextEnd) -> Option<()> {
+            if !self.available {
+                return None;
+            }
+            self.endpoint(end).set(other.endpoint(other_end).get());
+            Some(())
+        }
+    }
+    #[test]
+    fn enclosing_visible_range_is_clipped_to_the_focused_document() {
+        let page = "LEFTDOCUMENTRIGHT";
+        let document = Range::new(4, 12);
+        for (start, end, expected) in [
+            (0, 17, "DOCUMENT"),
+            (0, 8, "DOCU"),
+            (8, 17, "MENT"),
+            (6, 10, "CUME"),
+        ] {
+            let visible = Range::new(start, end);
+            assert_eq!(clip_visible(&visible, &document), Some(true));
+            assert_eq!(visible.text(page), expected);
+        }
+    }
+    #[test]
+    fn sibling_visible_ranges_and_unreadable_ranges_are_rejected() {
+        let document = Range::new(4, 12);
+        for (start, end) in [(0, 4), (12, 17), (1, 3), (13, 16)] {
+            assert_eq!(
+                clip_visible(&Range::new(start, end), &document),
+                Some(false)
+            );
+        }
+        let mut unavailable = Range::new(0, 17);
+        unavailable.available = false;
+        assert_eq!(clip_visible(&unavailable, &document), None);
+    }
+
     struct Source {
         allowed: bool,
         reads: usize,

@@ -27,6 +27,7 @@ try {
 <p>&#x7db2;&#x9801;&#x96fb;&#x8a71; 0800-333-444</p><p>EDGE-SECOND-PARAGRAPH</p>
 <div style="height:4000px">padding</div><p>EDGE-BOTTOM 02-7766-5544</p>
 <p hidden>HIDDEN-SENTINEL</p></main>
+<p>SIBLING-SENTINEL 0800-999-000</p>
 <label>Password <input id="secret" type="password" value="PASSWORD-SENTINEL"></label>
 <script>
 const reader = document.getElementById('reader');
