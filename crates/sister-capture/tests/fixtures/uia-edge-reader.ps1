@@ -2,6 +2,8 @@
 param([Parameter(Mandatory=$true)][string]$StateDir)
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName UIAutomationClient
+Add-Type -AssemblyName UIAutomationTypes
 Add-Type @'
 using System;
 using System.Runtime.InteropServices;
@@ -70,6 +72,17 @@ window.addEventListener('keydown', event => {
             }
             $browser.Refresh()
             if ($mode -eq 'address' -or $browser.MainWindowTitle.StartsWith("Sister Edge $mode")) {
+                # Only describe metadata under this owned foreground window. This
+                # makes a native provider mismatch diagnosable without product logging.
+                $node = [System.Windows.Automation.AutomationElement]::FocusedElement
+                $metadata = @()
+                for ($depth = 0; $depth -lt 8 -and $null -ne $node; $depth++) {
+                    $current = $node.Current
+                    $metadata += "$depth type=$($current.ControlType.ProgrammaticName) class=$($current.ClassName) rect=$($current.BoundingRectangle) password=$($current.IsPassword) offscreen=$($current.IsOffscreen) focused=$($current.HasKeyboardFocus) text=$($node.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::IsTextPatternAvailableProperty))"
+                    if ($current.NativeWindowHandle -eq $hwnd.ToInt64()) { break }
+                    $node = [System.Windows.Automation.TreeWalker]::ControlViewWalker.GetParent($node)
+                }
+                [IO.File]::WriteAllText((Join-Path $StateDir 'metadata'), ($metadata -join "`n"))
                 [IO.File]::WriteAllText((Join-Path $StateDir 'ready'), $mode)
                 $last = $mode
             }

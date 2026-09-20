@@ -766,6 +766,11 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      # These own synthetic WPF/Edge windows; run alone to isolate foreground state.
+      - name: UIA — read WPF and Edge visible paragraphs; reject excluded text
+        timeout-minutes: 3
+        run: cargo test -p sister-capture --test windows_uia -- --ignored --nocapture --test-threads=1
+
       # 這一步是 Linux 上做不到的事：Win32 程式碼真的被執行
       - name: Test
         run: cargo test --workspace
@@ -786,11 +791,6 @@ jobs:
           cargo test -p sister-capture \
             windows::tests::production_recorder_drop_drains_callbacks_before_stop_can_complete \
             -- --exact --ignored --nocapture --test-threads=1
-
-      # These own synthetic WPF/Edge windows; run alone to isolate foreground state.
-      - name: UIA — read WPF and Edge visible paragraphs; reject excluded text
-        timeout-minutes: 3
-        run: cargo test -p sister-capture --test windows_uia -- --ignored --nocapture --test-threads=1
 
       # fs4 鎖與 downloader feature 都要在真正 Windows 執行一次；這些測試使用
       # 本機 fake transport，平常 push 不連 CDN。

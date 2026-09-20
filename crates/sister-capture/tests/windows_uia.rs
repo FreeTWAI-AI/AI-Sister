@@ -248,6 +248,10 @@ fn native_edge_reader_visible_paragraphs_scroll_and_privacy() {
     let mut focus = WindowsFocus::new();
     let permit = fixture.observe(&mut focus, SensitiveFieldState::Clear);
     let initial = text(&focus.assistive_text(permit), "document");
+    println!(
+        "Edge provider metadata: {}",
+        std::fs::read_to_string(fixture.dir.join("metadata")).unwrap()
+    );
     assert!(
         initial.contains("網頁電話 0800-333-444"),
         "Edge visible text: {initial:?}"
