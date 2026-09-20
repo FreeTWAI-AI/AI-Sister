@@ -720,10 +720,11 @@ pub fn save(data_dir: &Path, consent: &Consent) -> Result<()> {
 }
 
 /// 寫鎖是 consent 檔的 sibling，不跟著每次 atomic replace 換 inode；檔案本身永久
-/// 保留，任何 consent／forget／prune 路徑都不刪它。handle drop 由作業系統釋放鎖，
-/// 所以 writer crash 不會留下永久占用。
+/// 保留，任何 consent／forget／prune 路徑都不刪它。交易結束時先明確解鎖：Unix
+/// fork → exec 之間的 child 可能仍有同一個 open file description，僅關閉 parent
+/// 的 handle 會讓已完成的 writer 繼續被判成 Busy。最後一個 handle 關閉仍會釋放鎖。
 struct ConsentWriteLock {
-    _file: File,
+    file: File,
 }
 
 impl ConsentWriteLock {
@@ -731,7 +732,15 @@ impl ConsentWriteLock {
         let path = data_dir.join(WRITE_LOCK);
         let file = open_consent_lock(data_dir)?;
         FileExt::lock(&file).with_context(|| format!("取得同意書寫鎖 {}", path.display()))?;
-        Ok(Self { _file: file })
+        Ok(Self { file })
+    }
+}
+
+impl Drop for ConsentWriteLock {
+    fn drop(&mut self) {
+        // 只有持鎖交易結束才走到這裡；成功、回錯與 unwind 都不可把 writer 留給 child。
+        // 解鎖失敗仍由 File drop 收尾，不把錯誤變成任何 consent 授權。
+        let _ = FileExt::unlock(&self.file);
     }
 }
 

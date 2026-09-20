@@ -140,7 +140,14 @@ no-network 與 no-keylogging 通過。
 編譯，測試保留全部狀態；macOS 維持 `NotAsked`，修正原生 clippy 的 dead-code 失敗。
 Windows root／desktop 編譯與 clippy、host fmt／clippy、同意書文案與 no-network 通過。
 workspace 首輪有一條同意鎖測試在已簽後回 `Busy`；未改程式，該條單跑與整批重跑均過，
-重跑為 1,994 通過／0 失敗／3 忽略。偶發 `Busy` 尚未定位，不當成已修復。
+重跑為 1,994 通過／0 失敗／3 忽略。當時偶發 `Busy` 尚未定位；後續修復見下一段。
+
+**同日同意寫鎖收尾（未發版）：** 本機真子行程固定住 fork → exec 前的描述元繼承窗，
+重現交易已結束卻仍回 `Busy`。寫鎖現在由 guard drop 明確解鎖，不再等子行程關閉繼承的
+handle；簽署、撤回與交易失敗都有回歸，子行程仍活著時就必須讀到正確的最新同意狀態。
+原程式兩條測試皆紅；故意提前解鎖也會被「交易尚未結束必須 Busy」的斷言抓到。
+還原後 workspace 1,996 通過／0 失敗／3 忽略；fmt、clippy、Windows root／desktop、
+同意書文案／保存、brain outbound、no-network、no-keylogging 通過。
 
 ---
 
