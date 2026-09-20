@@ -17971,15 +17971,16 @@ pub mod doctor {
         /// 都必須畫成同一句明確的 ■，不能各自冒充平台失敗。
         live_stopped: bool,
         url: CapabilityState,
-        /// 對現在的前景視窗真的問一次網址的結果。`None` = 本平台問不了。
+        /// 對現在的前景視窗真的問一次網址的結果。`None` = **這份 doctor 沒問**
+        /// （目前只有 Windows 那半邊問），所以那一列整個不印——不是印一句
+        /// 「這個平台讀不到網址」。
         url_probe: Option<(&'static str, &'static str, String)>,
-        /// 現在的前景視窗是誰：`(app, 標題)`。`None` = 本平台問不到，
-        /// 兩個欄位各自可能是空字串（讀得到視窗但讀不到那一項）。
+        /// 現在的前景視窗是誰：app 名稱與視窗標題。
         ///
         /// `excluded_apps` / `excluded_titles` 比對的就是這兩個字串，所以
         /// 「規則有幾條」和「規則會不會生效」是兩件事：讀不到字串的話，
         /// 那些規則一條都不會命中——而數量照樣印得出來。
-        focus_probe: Option<(String, String)>,
+        focus_probe: FocusProbe,
         /// doctor 會在 Windows 真的裝一次；其他平台沒有這項探測時是
         /// `Unknown`，不是一個偽造的 `Unavailable`。
         input_hooks: CapabilityState,
@@ -17987,6 +17988,15 @@ pub mod doctor {
         ocr: CapabilityState,
         ocr_language: Option<String>,
         ocr_available: Vec<String>,
+        /// OCR 畫成 ✗ 的時候，**是哪一種做不到**：`(OCR 語言那一行, 已安裝的語言那一行)`。
+        ///
+        /// Windows 上 `Unavailable` 只有一種成因（系統 OCR 一定在，缺的是語言包），
+        /// 所以那兩句寫死是對的，這裡是 `None`。Linux 有兩種，而它們的下一步不同：
+        /// `apt install tesseract-ocr` 和 `apt install tesseract-ocr-chi-tra`。
+        ///
+        /// 兩句綁在同一個欄位裡，是因為它們必須一起改：引擎都問不到的那台機器上，
+        /// 「已安裝的語言（已探測，無）」是假的——我們從來沒拿到過那份清單。
+        ocr_unavailable: Option<(String, String)>,
         /// **實測**出來的檢查列：(過了沒, 標籤, 說明)。
         ///
         /// 刻意在這裡就判定完、只留下要印的字，是為了把平台專屬的型別
@@ -17997,6 +18007,106 @@ pub mod doctor {
         broken_privacy: Vec<String>,
         /// 其實什麼都沒記住，但你不會發現
         degraded: Vec<String>,
+    }
+
+    /// 前景視窗的三態，不是 `Option`。
+    ///
+    /// `None` 以前同時裝著兩件事：「問了，讀不到」和「這份 doctor 根本沒問」。
+    /// 印出來的是前者——於是 Linux X11 Developer Preview 上那兩行寫著
+    /// 「讀不到前景 app」與「本平台讀不到視窗標題，這些規則目前不生效」，
+    /// 而 production recorder 從 alpha.125 起就在讀（`linux::foreground`），
+    /// `PrivacyConfig::check` 也真的拿那兩個字串在擋。一句關於隱私的假話，
+    /// 方向還是最壞的那一種：他以為門開著，其實門是關的——下一步是去關一扇
+    /// 已經關好的門，然後開始不相信這一頁。
+    ///
+    /// 這就是 `CapabilityState` 那段註解講的同一件事：把「我不知道」壓成
+    /// 一個已驗證的 ✗。
+    #[derive(Default, Debug, PartialEq, Eq)]
+    enum FocusProbe {
+        /// 這份 doctor 在這個平台上沒有問過。**不是**「問了，問不到」。
+        #[default]
+        NotAsked,
+        /// 問了，但判不出答案——例如判不出這條桌面是不是目前登入者的。
+        /// 和 `NotAsked` 一樣畫 `?`，但句子不一樣：一個是沒問，一個是問了。
+        ///
+        /// 目前只有 Linux 的 `preflight` 生得出這一格（`UnknownReason` 四種）。
+        /// Windows 那條路上「問了而答不出來」全部走 `Unreadable`——UIA 答不出
+        /// privacy context 的時候 recorder 就在內容來源前停下，所以「這些規則
+        /// 不會命中」是講得出口的。那半邊在這裡沒有呼叫端是**對的**，不是漏接，
+        /// 所以只在那些平台關掉 dead_code，不是整個關掉。
+        #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+        Uncheckable { why: String },
+        /// 問了，讀不到前景視窗。`why` 是那一次探測自己講的話。
+        Unreadable { why: Option<String> },
+        /// 讀到了。兩個欄位各自可能是空字串（讀得到視窗但讀不到那一項）。
+        Read { app: String, title: String },
+    }
+
+    /// 「排除的 app」那一行的符號與後半句。
+    ///
+    /// 和 [`excluded_titles_row`] 拉成函式不是為了短，是為了讓它們被一條測試
+    /// 釘住：同一份報告上這兩行講的是同一件事的兩半（app 名稱／視窗標題），
+    /// 而它們的失敗方式不一樣——有些視窗讀得到 exe 名稱卻沒有標題。
+    ///
+    /// **`?` 和 `✗` 的分界線是這兩支的全部重點。** `✗` 是一句斷言：「你那幾條
+    /// 規則現在一條都不會命中」。只有真的問過、而且問到「讀不到」，才講得出
+    /// 這句話。
+    fn excluded_apps_row(live_stopped: bool, probe: &FocusProbe) -> (&'static str, String) {
+        match (live_stopped, probe) {
+            (true, _) => ("■", "，全停閘門擋住，沒有探測".to_string()),
+            (false, FocusProbe::Read { app, .. }) if !app.is_empty() => {
+                ("✓", format!("，現在讀到的是 {app}"))
+            }
+            (false, FocusProbe::Read { .. }) => {
+                ("?", "，但現在沒有前景視窗，這一刻測不出來".to_string())
+            }
+            (false, FocusProbe::Unreadable { why }) => (
+                "✗",
+                match why {
+                    Some(why) => {
+                        format!("（讀不到前景 app：{why}；privacy gate 不會把未知狀態當安全放行）")
+                    }
+                    None => "（讀不到前景 app，privacy gate 不會把未知狀態當安全放行）".to_string(),
+                },
+            ),
+            (false, FocusProbe::Uncheckable { why }) => {
+                ("?", format!("（{why}，規則會不會命中這裡答不出來）"))
+            }
+            // 「沒問」不可以印成「問不到」。這一格畫成 ✗ 的那一版，在一台規則
+            // 真的在擋東西的機器上告訴使用者他的規則沒生效。
+            (false, FocusProbe::NotAsked) => (
+                "?",
+                "（這份 doctor 沒有量前景視窗，規則會不會命中這裡答不出來）".to_string(),
+            ),
+        }
+    }
+
+    /// 「排除的標題」那一行的符號與後半句。見 [`excluded_apps_row`]。
+    fn excluded_titles_row(live_stopped: bool, probe: &FocusProbe) -> (&'static str, String) {
+        match (live_stopped, probe) {
+            (true, _) => ("■", "，全停閘門擋住，沒有探測".to_string()),
+            (false, FocusProbe::Read { title, .. }) if !title.is_empty() => (
+                "✓",
+                format!("，現在讀到的是「{}」", crate::fmt::one_line(title, 40)),
+            ),
+            (false, FocusProbe::Read { .. }) => ("?", "，但現在這個視窗沒有標題可比對".to_string()),
+            // 講的是**這一刻**讀不到，不是「本平台」做不到：同一支 doctor 在
+            // 讀得到的機器上跑會走到上面兩格，而那句話會替整個平台背書。
+            (false, FocusProbe::Unreadable { why }) => (
+                "✗",
+                match why {
+                    Some(why) => format!("（讀不到前景視窗：{why}，所以這些規則一條都不會命中）"),
+                    None => "（這一刻讀不到前景視窗，所以這些規則一條都不會命中）".to_string(),
+                },
+            ),
+            (false, FocusProbe::Uncheckable { why }) => {
+                ("?", format!("（{why}，規則會不會命中這裡答不出來）"))
+            }
+            (false, FocusProbe::NotAsked) => (
+                "?",
+                "（這份 doctor 沒有量前景視窗，規則會不會命中這裡答不出來）".to_string(),
+            ),
+        }
     }
 
     /// 把一段辨識結果縮成一行可以印的樣子。
@@ -18081,13 +18191,13 @@ pub mod doctor {
         }
     }
 
-    #[cfg(any(windows, test))]
+    #[cfg(any(windows, target_os = "linux", test))]
     enum LiveProbePolicy {
         Allowed(sister_hands::master_stop::ActivityGuard),
         Stopped,
     }
 
-    #[cfg(any(windows, test))]
+    #[cfg(any(windows, target_os = "linux", test))]
     impl LiveProbePolicy {
         fn observe(data_dir: &Path) -> Self {
             sister_hands::master_stop::admit(data_dir)
@@ -18185,7 +18295,7 @@ pub mod doctor {
         }
         let mut probes = Vec::new();
         let url_probe;
-        let focus_probe;
+        let focus_probe: FocusProbe;
 
         // UIA：一樣不宣稱。真的對現在的前景視窗問一次網址。
         // `✓ UIA 建得起來` 這句話的價值是零——使用者要知道的是
@@ -18206,8 +18316,10 @@ pub mod doctor {
                 }) => {
                     let app = focus.app_key();
                     // 排除規則比對的就是這兩個字串。讀得到才代表那些規則跑得動。
-                    focus_probe =
-                        Some((app.clone(), focus.window_title.clone().unwrap_or_default()));
+                    focus_probe = FocusProbe::Read {
+                        app: app.clone(),
+                        title: focus.window_title.clone().unwrap_or_default(),
+                    };
                     url_probe = Some(match (browser_url, alive) {
                         (sister_core::model::BrowserUrlState::Known(url), _) => (
                             "✓",
@@ -18256,7 +18368,7 @@ pub mod doctor {
                     context: sister_core::model::PrivacyContext::Unknown,
                     ..
                 }) => {
-                    focus_probe = None;
+                    focus_probe = FocusProbe::Unreadable { why: None };
                     url_probe = Some((
                         "?",
                         "讀你現在的網址",
@@ -18268,7 +18380,9 @@ pub mod doctor {
                     ));
                 }
                 Err(error) => {
-                    focus_probe = None;
+                    focus_probe = FocusProbe::Unreadable {
+                        why: Some(format!("{error:#}")),
+                    };
                     url_probe = Some((
                         "?",
                         "讀你現在的網址",
@@ -18277,7 +18391,7 @@ pub mod doctor {
                 }
             }
         } else {
-            focus_probe = None;
+            focus_probe = FocusProbe::NotAsked;
             url_probe = Some(("■", "讀你現在的網址", "全停閘門擋住，沒有探測".to_string()));
         }
 
@@ -18409,6 +18523,9 @@ pub mod doctor {
             ocr: c.ocr,
             ocr_language: c.ocr_language.clone(),
             ocr_available: c.ocr_languages_available.clone(),
+            // Windows 的系統 OCR 一定在，`Unavailable` 只有一種成因——缺語言包。
+            // 一種成因才可以寫死一句話；Linux 那半邊有兩種，所以它自己填。
+            ocr_unavailable: None,
             ocr_probes: probes,
             // 終端機沒有「排除網址那一格」和「輸入節奏那一格」的分別，
             // 所以 `about` 在這裡用不到——一行一行印就是了。分格是設定頁
@@ -18422,7 +18539,108 @@ pub mod doctor {
         }
     }
 
-    #[cfg(not(windows))]
+    /// Linux X11 Developer Preview 的現場探測。
+    ///
+    /// 這半邊以前整個是 `Caps::default()`，於是 doctor 印出三句它從來沒量過的
+    /// 話：「讀不到前景 app」「本平台讀不到視窗標題，這些規則目前不生效」
+    /// 「OCR 語言 沒有量到」。前兩句是假的——production recorder 從 alpha.125 起
+    /// 就在讀（`linux::foreground`），`PrivacyConfig::check` 也真的拿那兩個
+    /// 字串在擋。第三句雖然誠實，卻正好在使用者最需要答案的地方閉嘴：
+    /// 這個後端的 OCR 是外部的 `/usr/bin/tesseract`，它不在的時候
+    /// `sister record` 連第一拍都跑不到，而 doctor 的工作就是在那之前講。
+    ///
+    /// 和 Windows 那半邊一樣走 [`LiveProbePolicy`]：三層全停的時候一個 live
+    /// source 都不准碰，而「全停擋住」和「這個平台問不出來」在畫面上是兩句話。
+    ///
+    /// **不寫能力報告。** 和這半邊當初不寫是同一個理由：這裡量到的東西在
+    /// `capabilities::Report` 裡一格都沒有（它存的是 UIA 與輸入 hook），寫進去
+    /// 只會把 `record` 那一場留下的證據蓋成一片乾淨。
+    #[cfg(target_os = "linux")]
+    fn caps(data_dir: &Path, config: &Config, master_stopped: bool) -> Caps {
+        use sister_capture::linux::OcrReadiness;
+
+        let live = LiveProbePolicy::observe(data_dir);
+        // 和 Windows 同一句註記：開頭那個快照只給顯示用，真正授權 live source
+        // 的是上面這道 admission。
+        let _ = master_stopped;
+
+        let focus_probe = focus_probe_from(live.run(sister_capture::linux::probe_desktop));
+
+        // 語言清單不是 live source（不碰螢幕、不連 X11），和 Windows 那邊
+        // `Capabilities::current` 不包在 `live.run` 裡是同一個判準。
+        let readiness = OcrReadiness::probe(config);
+        let ocr_unavailable = ocr_unavailable_rows(&readiness);
+
+        Caps {
+            live_stopped: live.is_stopped(),
+            focus_probe,
+            ocr: readiness.capability(),
+            ocr_language: readiness.languages().map(str::to_owned),
+            ocr_available: readiness.installed().unwrap_or_default().to_vec(),
+            ocr_unavailable,
+            ..Default::default()
+        }
+    }
+
+    /// 把一次桌面探測翻成 doctor 那兩行讀得懂的三態。
+    ///
+    /// 四種結果對應到的符號有三種，而其中兩對的差別正是這整段的重點：
+    /// `NotSupported` 和 `NoForeground` 都是「問過了，讀不到」（✗），
+    /// `Uncheckable` 和 `None` 都畫 `?` 但句子不同（一個問了、一個沒問）。
+    /// 拉成函式是為了讓這四條翻譯被測試釘住——`caps` 自己會碰真的 X11，
+    /// 那裡量到什麼要看跑它的機器，而這四條不可以。
+    #[cfg(target_os = "linux")]
+    fn focus_probe_from(probe: Option<sister_capture::linux::DesktopProbe>) -> FocusProbe {
+        use sister_capture::linux::DesktopProbe;
+        match probe {
+            Some(DesktopProbe::Foreground { app, title }) => FocusProbe::Read { app, title },
+            Some(DesktopProbe::NoForeground { why }) => FocusProbe::Unreadable { why: Some(why) },
+            // 她在這個環境根本不會開始讀螢幕，所以那些規則確實一條都不在生效。
+            Some(DesktopProbe::NotSupported(reason)) => FocusProbe::Unreadable {
+                why: Some(reason.words().to_string()),
+            },
+            // 「判不出來」不是「讀不到」。畫成 ✗ 的話，一台只是 logind 對不上的
+            // 機器會被告知它的排除規則壞了。
+            Some(DesktopProbe::Uncheckable(reason)) => FocusProbe::Uncheckable {
+                why: reason.words().to_string(),
+            },
+            // 全停閘門擋掉了這次探測。那不是這台機器的答案。
+            None => FocusProbe::NotAsked,
+        }
+    }
+
+    /// OCR 在這台 Linux 上畫成 ✗ 的時候，那兩行各自要說什麼。
+    ///
+    /// 兩句綁在一起回傳，因為它們必須一起改：引擎都問不到的那台機器上，
+    /// 「已安裝的語言（已探測，無）」是假的——我們從來沒拿到過那份清單。
+    /// `None` = 這不是一種做不到，上面那一層會走別的分支。
+    #[cfg(target_os = "linux")]
+    fn ocr_unavailable_rows(
+        readiness: &sister_capture::linux::OcrReadiness,
+    ) -> Option<(String, String)> {
+        use sister_capture::linux::OcrReadiness;
+        match readiness {
+            OcrReadiness::NoEngine { why } => Some((
+                format!("已探測：問不到本機 Tesseract（{why}）"),
+                "（引擎都問不到，所以沒有清單；先裝 tesseract-ocr）".to_string(),
+            )),
+            OcrReadiness::MissingLanguages { wanted, installed } => Some((
+                format!(
+                    "已探測：Tesseract 在，但設定要的語言（{}）一個都沒裝",
+                    wanted.join("、")
+                ),
+                if installed.is_empty() {
+                    "（引擎在，一個語言都沒裝）".to_string()
+                } else {
+                    installed.join("、")
+                },
+            )),
+            // `Off` 在 doctor 那一層就被 `config.capture.ocr` 擋掉了；`Ready` 不畫 ✗。
+            OcrReadiness::Off | OcrReadiness::Ready { .. } => None,
+        }
+    }
+
+    #[cfg(not(any(windows, target_os = "linux")))]
     fn caps(data_dir: &Path, config: &Config, master_stopped: bool) -> Caps {
         let _ = (data_dir, config);
         Caps {
@@ -18891,15 +19109,7 @@ pub mod doctor {
         // 「9 條規則 ✓」是 THREAT_MODEL 明文禁止的那種寫法：規則的**數量**
         // 從來不是問題，規則**會不會命中**才是。這些規則比對的是前景 app
         // 名稱，所以讀不到名稱的時候它們一條都不生效——而數量照樣是 9。
-        let (sym, note) = match (caps.live_stopped, &caps.focus_probe) {
-            (true, _) => ("■", "，全停閘門擋住，沒有探測".to_string()),
-            (false, Some((app, _))) if !app.is_empty() => ("✓", format!("，現在讀到的是 {app}")),
-            (false, Some(_)) => ("?", "，但現在沒有前景視窗，這一刻測不出來".to_string()),
-            (false, None) => (
-                "✗",
-                "（讀不到前景 app，privacy gate 不會把未知狀態當安全放行）".to_string(),
-            ),
-        };
+        let (sym, note) = excluded_apps_row(caps.live_stopped, &caps.focus_probe);
         mark(
             sym,
             "排除的 app",
@@ -18947,18 +19157,7 @@ pub mod doctor {
         }
         // 標題和 app 來自同一次 snapshot，但**失敗方式不一樣**：有些視窗
         // 讀得到 exe 名稱卻沒有標題。分開報，才不會讓 app 的 ✓ 幫標題背書。
-        let (sym, note) = match (caps.live_stopped, &caps.focus_probe) {
-            (true, _) => ("■", "，全停閘門擋住，沒有探測".to_string()),
-            (false, Some((_, title))) if !title.is_empty() => (
-                "✓",
-                format!("，現在讀到的是「{}」", crate::fmt::one_line(title, 40)),
-            ),
-            (false, Some(_)) => ("?", "，但現在這個視窗沒有標題可比對".to_string()),
-            (false, None) => (
-                "✗",
-                "（本平台讀不到視窗標題，這些規則目前不生效）".to_string(),
-            ),
-        };
+        let (sym, note) = excluded_titles_row(caps.live_stopped, &caps.focus_probe);
         mark(
             sym,
             "排除的標題",
@@ -19019,16 +19218,12 @@ pub mod doctor {
                     );
                 }
                 CapabilityState::Unavailable => {
-                    mark(
-                        capability_symbol(caps.ocr),
-                        "OCR 語言",
-                        "已探測：這台機器沒有任何 OCR 語言",
-                    );
-                    mark(
-                        capability_symbol(caps.ocr),
-                        "已安裝的語言",
-                        "（已探測，無）",
-                    );
+                    let (language_row, installed_row) = caps.ocr_unavailable.clone().unwrap_or((
+                        "已探測：這台機器沒有任何 OCR 語言".to_string(),
+                        "（已探測，無）".to_string(),
+                    ));
+                    mark(capability_symbol(caps.ocr), "OCR 語言", &language_row);
+                    mark(capability_symbol(caps.ocr), "已安裝的語言", &installed_row);
                 }
                 CapabilityState::Available => {
                     match &caps.ocr_language {
@@ -19319,7 +19514,7 @@ pub mod doctor {
                 .find("#[cfg(windows)]\n    fn caps(data_dir")
                 .expect("windows caps start");
             let end = source[start..]
-                .find("#[cfg(not(windows))]\n    fn caps(data_dir")
+                .find("#[cfg(target_os = \"linux\")]\n    fn caps(data_dir")
                 .map(|offset| start + offset)
                 .expect("windows caps end");
             let compact: String = source[start..end]
@@ -19347,6 +19542,205 @@ pub mod doctor {
                     "production caps 的 {native} 繞過 LiveProbePolicy"
                 );
             }
+        }
+
+        #[test]
+        #[cfg(target_os = "linux")]
+        fn linux_caps_production_routes_its_live_probe_through_the_policy() {
+            // 立完族規的下一個動作，是把同族既有成員接上跑。這一個是新成員：
+            // `probe_desktop` 會連上 X11 讀前景視窗，和 Windows 那三個入口同一類，
+            // 所以它也必須待在 `live.run` 裡——三層全停的時候一個都不准碰。
+            let source = include_str!("ops.rs").replace("\r\n", "\n");
+            let start = source
+                .find("#[cfg(target_os = \"linux\")]\n    fn caps(data_dir")
+                .expect("linux caps start");
+            let end = source[start..]
+                .find("#[cfg(target_os = \"linux\")]\n    fn ocr_unavailable_rows")
+                .map(|offset| start + offset)
+                .expect("linux caps end");
+            let compact: String = source[start..end]
+                .chars()
+                .filter(|ch| !ch.is_whitespace())
+                .collect();
+            assert_eq!(
+                compact.matches("probe_desktop").count(),
+                1,
+                "production caps 的 probe_desktop 入口數改了；請逐一確認都受 policy 保護"
+            );
+            assert!(
+                compact.contains("live.run(sister_capture::linux::probe_desktop)"),
+                "production caps 的 probe_desktop 繞過 LiveProbePolicy"
+            );
+            // 語言清單刻意在閘門外面（不碰螢幕、不連 X11）。把「刻意」寫成一條
+            // 會紅的東西，免得下一個人以為那是漏掉的。
+            assert!(
+                compact.contains("letreadiness=OcrReadiness::probe(config);"),
+                "OCR 語言探測換了寫法；它刻意不在 live.run 裡，改動要重新確認"
+            );
+        }
+
+        #[test]
+        fn a_row_that_never_asked_must_not_claim_the_rules_are_dead() {
+            // 「N 條規則」那兩行是一句關於隱私的斷言。`✗` 的意思是「你那幾條
+            // 規則現在一條都不會命中」——只有真的問過、而且問到讀不到，才講得
+            // 出這句話。這半邊以前整個是 `Caps::default()`，於是 Linux 上那兩行
+            // 印著 `✗`，而 recorder 正拿那兩個字串在擋東西。
+            type Row = fn(bool, &FocusProbe) -> (&'static str, String);
+            let asked_and_dead = FocusProbe::Unreadable { why: None };
+            let never_asked = FocusProbe::NotAsked;
+            let inconclusive = FocusProbe::Uncheckable {
+                why: "logind 對不出目前這個行程屬於哪一個本機 system session".to_string(),
+            };
+            let read = FocusProbe::Read {
+                app: "keepassxc".to_string(),
+                title: "密碼保險庫".to_string(),
+            };
+            let every = [&asked_and_dead, &never_asked, &inconclusive, &read];
+
+            for row in [excluded_apps_row as Row, excluded_titles_row as Row] {
+                assert_eq!(row(false, &asked_and_dead).0, "✗");
+                assert_eq!(
+                    row(false, &never_asked).0,
+                    "?",
+                    "沒問過不可以畫成一個已驗證的 ✗"
+                );
+                assert_eq!(
+                    row(false, &inconclusive).0,
+                    "?",
+                    "判不出來不可以畫成一個已驗證的 ✗"
+                );
+                assert_eq!(row(false, &read).0, "✓");
+                for probe in every {
+                    // 全停那一刻什麼都沒探測，四種一律 ■，不替任何一種背書。
+                    assert_eq!(row(true, probe).0, "■", "{probe:?}");
+                    for stopped in [true, false] {
+                        let (_, note) = row(stopped, probe);
+                        // 這整條的由來：一句關於**平台**的宣稱，而這支函式手上
+                        // 只有一次探測。它答得出「這一刻」，答不出「這個平台」。
+                        assert!(!note.contains("本平台"), "{note}");
+                    }
+                }
+            }
+
+            // 兩行不共用同一句：app 讀得到而標題空著，是同一次探測的兩個答案。
+            let app_only = FocusProbe::Read {
+                app: "chrome.exe".to_string(),
+                title: String::new(),
+            };
+            assert_eq!(excluded_apps_row(false, &app_only).0, "✓");
+            assert_eq!(excluded_titles_row(false, &app_only).0, "?");
+
+            // 問到的原因要講出來，否則他不知道下一步該做什麼。
+            let headless = FocusProbe::Unreadable {
+                why: Some("沒有 X11 或 Wayland display 的 headless／TTY 環境".to_string()),
+            };
+            for row in [excluded_apps_row as Row, excluded_titles_row as Row] {
+                let (sym, note) = row(false, &headless);
+                assert_eq!(sym, "✗");
+                assert!(note.contains("headless"), "{note}");
+            }
+        }
+
+        #[test]
+        #[cfg(target_os = "linux")]
+        fn the_four_desktop_answers_do_not_collapse_into_two() {
+            use sister_capture::linux::{DesktopProbe, UnknownReason, UnsupportedReason};
+
+            assert_eq!(
+                focus_probe_from(Some(DesktopProbe::Foreground {
+                    app: "chrome.exe".to_string(),
+                    title: "帳單查詢".to_string(),
+                })),
+                FocusProbe::Read {
+                    app: "chrome.exe".to_string(),
+                    title: "帳單查詢".to_string(),
+                }
+            );
+            // 問過了、讀不到 → ✗ 講得出口。
+            for unreadable in [
+                DesktopProbe::NoForeground {
+                    why: "X11 沒有前景視窗".to_string(),
+                },
+                DesktopProbe::NotSupported(UnsupportedReason::Headless),
+                DesktopProbe::NotSupported(UnsupportedReason::Wayland),
+            ] {
+                let probe = focus_probe_from(Some(unreadable.clone()));
+                assert!(
+                    matches!(probe, FocusProbe::Unreadable { why: Some(_) }),
+                    "{unreadable:?} → {probe:?}"
+                );
+                assert_eq!(excluded_apps_row(false, &probe).0, "✗");
+            }
+            // 判不出來 → 只能 `?`，而且句子要講出是哪一種判不出來。
+            for reason in [
+                UnknownReason::ContradictorySession,
+                UnknownReason::DisplayUncheckable,
+                UnknownReason::SessionIdentityUncheckable,
+                UnknownReason::SessionMismatch,
+            ] {
+                let probe = focus_probe_from(Some(DesktopProbe::Uncheckable(reason)));
+                assert_eq!(
+                    probe,
+                    FocusProbe::Uncheckable {
+                        why: reason.words().to_string()
+                    }
+                );
+                assert_eq!(excluded_apps_row(false, &probe).0, "?", "{reason:?}");
+                assert!(
+                    excluded_titles_row(false, &probe)
+                        .1
+                        .contains(reason.words()),
+                    "{reason:?}"
+                );
+            }
+            // 全停擋掉的那一次不是這台機器的答案。
+            assert_eq!(focus_probe_from(None), FocusProbe::NotAsked);
+        }
+
+        #[test]
+        #[cfg(target_os = "linux")]
+        fn the_two_ocr_rows_name_which_kind_of_missing_it_is() {
+            use sister_capture::linux::OcrReadiness;
+
+            let (language, installed) = ocr_unavailable_rows(&OcrReadiness::NoEngine {
+                why: "找不到本機 Tesseract OCR".to_string(),
+            })
+            .expect("問不到引擎要有話講");
+            assert!(language.contains("找不到本機 Tesseract OCR"), "{language}");
+            assert!(installed.contains("tesseract-ocr"), "{installed}");
+            // 「（已探測，無）」在這一種上是假的：那份清單我們從來沒拿到過。
+            assert!(!installed.contains("已探測，無"), "{installed}");
+
+            let (language, installed) = ocr_unavailable_rows(&OcrReadiness::MissingLanguages {
+                wanted: vec!["zh-Hant-TW".to_string(), "en-US".to_string()],
+                installed: vec!["deu".to_string()],
+            })
+            .expect("缺語言要有話講");
+            assert!(language.contains("zh-Hant-TW"), "{language}");
+            assert!(language.contains("en-US"), "{language}");
+            assert_eq!(
+                installed, "deu",
+                "裝著的語言要照實列出來，他才知道缺的是哪一包"
+            );
+
+            // 兩種做不到的下一步不一樣，所以兩句話不可以長得一樣。
+            let no_engine = ocr_unavailable_rows(&OcrReadiness::NoEngine {
+                why: "找不到本機 Tesseract OCR".to_string(),
+            });
+            let no_language = ocr_unavailable_rows(&OcrReadiness::MissingLanguages {
+                wanted: vec!["zh-Hant-TW".to_string()],
+                installed: vec!["deu".to_string()],
+            });
+            assert_ne!(no_engine, no_language);
+
+            assert_eq!(
+                ocr_unavailable_rows(&OcrReadiness::Ready {
+                    languages: "chi_tra+eng".to_string(),
+                    installed: vec!["chi_tra".to_string(), "eng".to_string()],
+                }),
+                None
+            );
+            assert_eq!(ocr_unavailable_rows(&OcrReadiness::Off), None);
         }
 
         #[test]

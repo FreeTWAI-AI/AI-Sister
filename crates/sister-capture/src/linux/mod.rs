@@ -52,6 +52,17 @@ pub enum UnsupportedReason {
     Headless,
 }
 
+impl UnsupportedReason {
+    /// 給人讀的那一句。**住在這裡**，不住在 CLI：句子跟著機制走，抄一份過去
+    /// 的那一天，改的人只會改到其中一份。
+    pub const fn words(self) -> &'static str {
+        match self {
+            Self::Wayland => "這是 Wayland session（即使同時有 XWayland DISPLAY 也一樣）",
+            Self::Headless => "沒有 X11 或 Wayland display 的 headless／TTY 環境",
+        }
+    }
+}
+
 /// 尚不足以安全開始讀桌面內容的原因。
 ///
 /// 這些不是 [`UnsupportedReason`]：修正環境、權限或補上 session verifier 後可能
@@ -66,6 +77,22 @@ pub enum UnknownReason {
     SessionIdentityUncheckable,
     /// verifier 明確指出這條 X11 connection 不屬於目前 process 的 system session。
     SessionMismatch,
+}
+
+impl UnknownReason {
+    /// 給人讀的那一句。和 [`UnsupportedReason::words`] 同一個理由住在這裡。
+    pub const fn words(self) -> &'static str {
+        match self {
+            Self::ContradictorySession => {
+                "session type 和 display endpoint 互相矛盾，判不出這個行程在哪張桌面上"
+            }
+            Self::DisplayUncheckable => "DISPLAY 不是一個連得上、握得完手的 X11 endpoint",
+            Self::SessionIdentityUncheckable => {
+                "logind 對不出目前這個行程屬於哪一個本機 system session"
+            }
+            Self::SessionMismatch => "logind 明說這條 X11 連線不屬於目前這個行程的 session",
+        }
+    }
 }
 
 /// Preflight 對外只交出三態與原因；live X11 connection 不離開本模組。
@@ -527,30 +554,26 @@ pub struct Capabilities {
     pub accessibility: CapabilityState,
     pub ocr: CapabilityState,
     pub ocr_languages: Option<Vec<String>>,
+    /// `ocr` 與 `ocr_languages` 壓扁之前的原樣。`ocr = Unavailable` 有三種成因，
+    /// 而它們的下一步互不相同——見 [`OcrReadiness`]。
+    pub readiness: OcrReadiness,
 }
 
 impl Capabilities {
     pub fn current(config: &Config) -> Self {
         let screen = preflight().state().capability();
         let accessibility = CapabilityState::from_measured(A11y::connect().is_ok());
-        let ocr_languages = TesseractOcr::installed_languages().ok();
-        let ocr = if config.capture.ocr {
-            ocr_languages
-                .as_ref()
-                .map_or(CapabilityState::Unknown, |installed| {
-                    CapabilityState::from_measured(
-                        TesseractOcr::select_languages(&config.capture.ocr_languages, installed)
-                            .is_some(),
-                    )
-                })
-        } else {
-            CapabilityState::Unavailable
-        };
+        // 同一次探測供兩個呼叫端用：`record` 的能力報告，和 `doctor` 的「讀字」
+        // 那一段。分成兩次問的話，兩支命令會對同一台機器講出兩句不一樣的話。
+        let readiness = OcrReadiness::probe(config);
+        let ocr_languages = readiness.installed().map(<[String]>::to_vec);
+        let ocr = readiness.capability();
         Self {
             screen,
             accessibility,
             ocr,
             ocr_languages,
+            readiness,
         }
     }
 
@@ -561,6 +584,167 @@ impl Capabilities {
             input_hook: CapabilityState::Unavailable,
             ..Default::default()
         }
+    }
+}
+
+/// `sister record` 在這台機器上會不會讀得到螢幕上的字——讀不到的話，下一步是什麼。
+///
+/// 四格不是四種嚴重程度，是**四個不同的下一步**：設定檔關著／裝引擎／裝語言／
+/// 沒問題。中間那兩種以前在 `sister doctor` 上長得一模一樣（都印「沒有量到：
+/// linux 目前沒有可用的探測結果」），而它們一個要 `apt install tesseract-ocr`、
+/// 一個要 `apt install tesseract-ocr-chi-tra`。`sister record` 兩種都會整個拒絕
+/// 啟動（[`TesseractOcr::new`] 的兩種 `Err`）——體檢報告答不出「她讀不讀得到你的
+/// 螢幕」，正是那一頁存在的理由。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OcrReadiness {
+    /// 設定檔的 `capture.ocr` 關著。畫面仍會留下，字不會進資料庫。
+    Off,
+    /// 問不到本機 Tesseract。`why` 是那一次探測自己講的話，不是這裡猜的。
+    NoEngine { why: String },
+    /// 引擎在，但設定裡想要的語言一個都沒裝。
+    MissingLanguages {
+        wanted: Vec<String>,
+        installed: Vec<String>,
+    },
+    /// 引擎在、語言也在：`sister record` 會餵 `languages` 這一組給 Tesseract。
+    Ready {
+        languages: String,
+        installed: Vec<String>,
+    },
+}
+
+impl OcrReadiness {
+    /// 只跑一次 `tesseract --list-langs`：不碰螢幕、不連 X11、不寫任何檔案。
+    pub fn probe(config: &Config) -> Self {
+        if !config.capture.ocr {
+            return Self::Off;
+        }
+        let installed = match TesseractOcr::installed_languages() {
+            Ok(installed) => installed,
+            // 「問過了，答案是沒有」。壓成 `Unknown` 會讓 doctor 印出「沒有量到」
+            // ——而那台機器上 `sister record` 連第一拍都跑不到。
+            Err(error) => {
+                return Self::NoEngine {
+                    why: format!("{error:#}"),
+                };
+            }
+        };
+        Self::classify(&config.capture.ocr_languages, installed)
+    }
+
+    /// 引擎問到了之後的那一半：裝著的語言對上設定要的，是讀得懂還是缺語言。
+    ///
+    /// 和 [`Self::probe`] 分開，是因為這台機器決定得了前一半、決定不了後一半。
+    /// 開發機沒有 `/usr/bin/tesseract`，`probe` 一路停在 `NoEngine`，
+    /// `MissingLanguages` 一次都跑不到；CI 那台裝的是 `tesseract-ocr` 加
+    /// `chi-tra` 加 `eng`，一路走到 `Ready`。兩台機器都到不了的那一格，
+    /// 卻正是使用者最常站的那一格——`apt install tesseract-ocr` 只給你 `eng`。
+    /// 判準不可以只在沒人跑得到的地方被檢查。
+    fn classify(wanted: &[String], installed: Vec<String>) -> Self {
+        match TesseractOcr::select_languages(wanted, &installed) {
+            Some(languages) => Self::Ready {
+                languages,
+                installed,
+            },
+            None => Self::MissingLanguages {
+                wanted: wanted.to_vec(),
+                installed,
+            },
+        }
+    }
+
+    /// 壓成能力報告的三態。三種做不到壓成同一個 `Unavailable` 在這裡是對的
+    /// （報告存的是原始能力），要分辨成因的人讀的是這個 enum 本身。
+    pub fn capability(&self) -> CapabilityState {
+        match self {
+            Self::Off | Self::NoEngine { .. } | Self::MissingLanguages { .. } => {
+                CapabilityState::Unavailable
+            }
+            Self::Ready { .. } => CapabilityState::Available,
+        }
+    }
+
+    /// `sister record` 真的會用的那一組（例如 `chi_tra+eng`）。
+    pub fn languages(&self) -> Option<&str> {
+        match self {
+            Self::Ready { languages, .. } => Some(languages),
+            Self::Off | Self::NoEngine { .. } | Self::MissingLanguages { .. } => None,
+        }
+    }
+
+    /// 這台機器上裝著的語言。`None` = 引擎都問不到，所以沒有清單可印——
+    /// 和「引擎在、清單是空的」是兩件事。
+    pub fn installed(&self) -> Option<&[String]> {
+        match self {
+            Self::Off | Self::NoEngine { .. } => None,
+            Self::MissingLanguages { installed, .. } | Self::Ready { installed, .. } => {
+                Some(installed)
+            }
+        }
+    }
+}
+
+/// `sister doctor` 現在讀不讀得到前景視窗——也就是 `excluded_apps` 與
+/// `excluded_titles` 這一刻會不會命中。
+///
+/// 排除規則比對的就是 [`sister_core::model::FocusSnapshot::app_key`] 與
+/// `window_title` 這兩個字串（見 `PrivacyConfig::check`），所以「規則有幾條」
+/// 和「規則會不會生效」是兩件事。doctor 以前在這個平台上一句都沒量過，卻印著
+/// 「本平台讀不到視窗標題，這些規則目前不生效」——而 production recorder 從
+/// alpha.125 起就在讀（見 [`foreground`]）。那是一句關於隱私的假話。
+///
+/// 這一支只做 preflight 加兩個 X11 property 讀取：不開 AT-SPI、不叫 Tesseract、
+/// 不抓畫面、不寫任何檔案，也因此**不能**拿來繞過錄製那條 privacy gate。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DesktopProbe {
+    /// 量過了：這個環境不是受支援的 X11 桌面，她根本不會開始讀螢幕。
+    NotSupported(UnsupportedReason),
+    /// 量過了，但判不出這條桌面是不是目前登入者的本機 session。
+    Uncheckable(UnknownReason),
+    /// X11 在，這一刻讀不到前景視窗。`why` 是那一次讀取自己講的話。
+    NoForeground { why: String },
+    /// 讀到了。`app` 就是排除規則比對的那個字串（已經 lowercase），
+    /// `title` 可能是空字串——有些視窗讀得到 app 卻沒有標題。
+    Foreground { app: String, title: String },
+}
+
+/// 對這台機器的桌面做一次現場探測。見 [`DesktopProbe`]。
+pub fn probe_desktop() -> DesktopProbe {
+    let preflight = preflight();
+    match &preflight.outcome {
+        Outcome::Available(ready) => read_foreground(ready),
+        Outcome::Unsupported(reason) => DesktopProbe::NotSupported(*reason),
+        Outcome::Unknown(reason) => DesktopProbe::Uncheckable(*reason),
+    }
+}
+
+/// 拿已經驗過的那條連線讀一次前景身分。
+///
+/// 刻意和 [`LinuxBackend::observe_current`] 走同一支 [`foreground`]：doctor 說
+/// 「規則會命中」的時候，說的必須是 recorder 真的會拿去比對的那兩個字串，
+/// 不是另一條長得很像的路。
+fn read_foreground(ready: &X11Ready) -> DesktopProbe {
+    let atoms = match XAtoms::new(&ready.connection) {
+        Ok(atoms) => atoms,
+        Err(error) => {
+            return DesktopProbe::NoForeground {
+                why: format!("{error:#}"),
+            };
+        }
+    };
+    match foreground(&ready.connection, ready.screen_index, &atoms) {
+        Ok(identity) => DesktopProbe::Foreground {
+            app: FocusSnapshot {
+                app_id: identity.app_id,
+                app_name: identity.app_name,
+                ..Default::default()
+            }
+            .app_key(),
+            title: identity.title,
+        },
+        Err(error) => DesktopProbe::NoForeground {
+            why: format!("{error:#}"),
+        },
     }
 }
 
@@ -1278,7 +1462,13 @@ fn backend(config: &Config) -> Result<LinuxBackend> {
         Outcome::Unsupported(UnsupportedReason::Headless) => {
             return Err(anyhow!("這個 Linux session 沒有桌面畫面"));
         }
-        Outcome::Unknown(_) => return Err(anyhow!("讀不到目前的本機 X11 session")),
+        // 四種 `UnknownReason` 以前印同一句「讀不到目前的本機 X11 session」，
+        // 而它們的下一步不一樣：`DISPLAY` 連不上、session type 和 endpoint 打架、
+        // logind 對不出這個行程、logind 說這條連線不是他的。按下去的人看到的
+        // 是同一句話，於是那一句什麼也沒告訴他。`doctor` 印的是同一份 `words()`。
+        Outcome::Unknown(reason) => {
+            return Err(anyhow!("讀不到目前的本機 X11 session：{}", reason.words()));
+        }
     };
     LinuxBackend::from_ready(ready, config)
 }
@@ -1661,6 +1851,217 @@ mod tests {
         assert_eq!(ready.session.connection, retained);
         assert_eq!(result.state(), PreflightState::Available);
         assert_eq!(result.state().capability(), CapabilityState::Available);
+    }
+
+    /// 「問過了，答案是沒有」不可以畫成「沒有量到」。
+    ///
+    /// 這台機器上 `sister record` 會因為 Tesseract 不在（或語言不在）整個拒絕
+    /// 啟動——那正是 doctor 該在他按下去之前講的那一句。壓成 `Unknown` 的那一版，
+    /// 剛好在使用者最需要答案的地方閉嘴。
+    #[test]
+    fn the_ocr_probe_answers_yes_or_no_never_unmeasured() {
+        let mut config = Config::default();
+        config.capture.ocr = true;
+        let readiness = OcrReadiness::probe(&config);
+        assert_ne!(
+            readiness.capability(),
+            CapabilityState::Unknown,
+            "問過了就不准說沒量到：{readiness:?}"
+        );
+        // 兩邊各自成立，而且在裝著 Tesseract 和沒裝的機器上都成立——這條測試
+        // 不可以只在其中一種機器上有意義。
+        match &readiness {
+            OcrReadiness::NoEngine { .. } => assert_eq!(readiness.installed(), None),
+            OcrReadiness::MissingLanguages { .. } | OcrReadiness::Ready { .. } => {
+                assert!(readiness.installed().is_some(), "{readiness:?}")
+            }
+            OcrReadiness::Off => panic!("config.capture.ocr 是開著的"),
+        }
+
+        config.capture.ocr = false;
+        let off = OcrReadiness::probe(&config);
+        assert_eq!(off, OcrReadiness::Off);
+        assert_eq!(off.capability(), CapabilityState::Unavailable);
+    }
+
+    /// 引擎在，不等於讀得懂他的螢幕。
+    ///
+    /// `apt install tesseract-ocr` 只裝 `eng`。設定要中文的人在那台機器上按下
+    /// record，會被 `TesseractOcr::new` 擋掉（`select_languages` 回 `None`，
+    /// 「Tesseract 缺少設定中的 OCR 語言」），所以 doctor 在他按下去之前就得
+    /// 說出「引擎在，語言沒有」——不可以畫成 ✓。
+    ///
+    /// 餵清單進去而不問這台機器，是因為 [`OcrReadiness::probe`] 在開發機上
+    /// 永遠停在 `NoEngine`：拿 `probe` 寫的那一版，把 `MissingLanguages`
+    /// 整條換成 `Ready` 也照樣全綠，因為那一刀根本沒被執行到。
+    #[test]
+    fn the_engine_being_there_is_not_the_same_as_the_language_being_there() {
+        let wanted = vec!["zh-Hant-TW".to_string()];
+        let debian_default = vec!["eng".to_string(), "osd".to_string()];
+
+        let short = OcrReadiness::classify(&wanted, debian_default.clone());
+        assert_eq!(
+            short,
+            OcrReadiness::MissingLanguages {
+                wanted: wanted.clone(),
+                installed: debian_default,
+            },
+            "引擎在、要的語言不在，是自己一格，不是 Ready 也不是 NoEngine"
+        );
+        assert_eq!(
+            short.capability(),
+            CapabilityState::Unavailable,
+            "引擎在不等於讀得懂他的螢幕：{short:?}"
+        );
+        assert_eq!(short.languages(), None, "沒挑中任何語言就不准交出語言標籤");
+
+        let with_chinese =
+            OcrReadiness::classify(&wanted, vec!["chi_tra".to_string(), "eng".to_string()]);
+        assert_eq!(
+            with_chinese.capability(),
+            CapabilityState::Available,
+            "{with_chinese:?}"
+        );
+        assert_eq!(
+            with_chinese.languages(),
+            Some("chi_tra"),
+            "要印出**實際挑中的**那個，不是設定裡寫的那個"
+        );
+    }
+
+    /// 四格不可以彼此塌陷。
+    #[test]
+    fn the_four_ocr_answers_keep_their_own_next_step() {
+        let no_engine = OcrReadiness::NoEngine {
+            why: "找不到本機 Tesseract OCR".to_string(),
+        };
+        let no_language = OcrReadiness::MissingLanguages {
+            wanted: vec!["zh-Hant-TW".to_string()],
+            installed: vec!["deu".to_string()],
+        };
+        let ready = OcrReadiness::Ready {
+            languages: "chi_tra+eng".to_string(),
+            installed: vec!["chi_tra".to_string(), "eng".to_string()],
+        };
+
+        // 壓成三態的時候三種做不到收成同一個是對的：報告存的是原始能力。
+        for unavailable in [&OcrReadiness::Off, &no_engine, &no_language] {
+            assert_eq!(unavailable.capability(), CapabilityState::Unavailable);
+        }
+        assert_eq!(ready.capability(), CapabilityState::Available);
+
+        // 而要分辨成因的人讀的是這個 enum 本身，不是那個三態。
+        assert_eq!(no_engine.installed(), None, "引擎都問不到，沒有清單可印");
+        assert_eq!(
+            no_language.installed(),
+            Some(&["deu".to_string()][..]),
+            "引擎在，清單要照實交出來"
+        );
+        assert_eq!(ready.languages(), Some("chi_tra+eng"));
+        assert_eq!(no_language.languages(), None);
+        assert_eq!(OcrReadiness::Off.languages(), None);
+    }
+
+    /// doctor 的現場探測必須和 recorder 讀到同一個東西。
+    ///
+    /// 這條測的是 `excluded_apps` / `excluded_titles` 會不會命中這件事本身：
+    /// 產品拿去比對的就是這兩個字串（`PrivacyConfig::check` 讀
+    /// `FocusSnapshot::app_key` 與 `window_title`），而 doctor 以前在這個平台上
+    /// 一句都沒量過、卻印著「本平台讀不到視窗標題，這些規則目前不生效」。
+    ///
+    /// 兩半都要：**沒有前景視窗**的 Xvfb 上必須是 `NoForeground`（畫成 ✗ 是對的），
+    /// 真的掛上一個 `_NET_ACTIVE_WINDOW` 之後必須讀得回來（畫成 ✗ 就是假話）。
+    /// 標題用字面值比對；app 用另一條 API（`current_exe`）獨立算出期望值，不跟
+    /// 產品共用 `read_link("/proc/{pid}/exe")` 那一行。
+    #[test]
+    fn the_doctor_probe_reads_the_same_two_strings_the_exclusion_rules_match_on() {
+        use x11rb::protocol::xproto::{CreateWindowAux, PropMode, WindowClass};
+        use x11rb::wrapper::ConnectionExt as _;
+
+        let Some((_xvfb, result, _calls, _verifier)) = with_xvfb(VerifierAnswer::Exact) else {
+            return;
+        };
+        let Outcome::Available(ready) = &result.outcome else {
+            panic!("exact verifier did not produce an available transport")
+        };
+
+        match read_foreground(ready) {
+            DesktopProbe::NoForeground { why } => {
+                assert!(why.contains("前景視窗"), "{why}");
+            }
+            other => panic!("bare Xvfb has no active window, got {other:?}"),
+        }
+
+        let connection = &ready.connection;
+        let atoms = XAtoms::new(connection).expect("atoms");
+        let screen = &connection.setup().roots[ready.screen_index];
+        let root = screen.root;
+        let window = connection.generate_id().expect("window id");
+        connection
+            .create_window(
+                screen.root_depth,
+                window,
+                root,
+                0,
+                0,
+                32,
+                32,
+                0,
+                WindowClass::INPUT_OUTPUT,
+                screen.root_visual,
+                &CreateWindowAux::default(),
+            )
+            .expect("create window")
+            .check()
+            .expect("create window reply");
+        const TITLE: &str = "中華電信 客戶服務 - 帳單查詢";
+        connection
+            .change_property8(
+                PropMode::REPLACE,
+                window,
+                atoms.net_wm_name,
+                atoms.utf8_string,
+                TITLE.as_bytes(),
+            )
+            .expect("set title")
+            .check()
+            .expect("set title reply");
+        connection
+            .change_property32(
+                PropMode::REPLACE,
+                window,
+                atoms.pid,
+                u32::from(AtomEnum::CARDINAL),
+                &[std::process::id()],
+            )
+            .expect("set pid")
+            .check()
+            .expect("set pid reply");
+        connection
+            .change_property32(
+                PropMode::REPLACE,
+                root,
+                atoms.active_window,
+                u32::from(AtomEnum::WINDOW),
+                &[window],
+            )
+            .expect("set active window")
+            .check()
+            .expect("set active window reply");
+
+        let expected_app = std::env::current_exe()
+            .expect("current exe")
+            .file_name()
+            .expect("exe file name")
+            .to_string_lossy()
+            .to_ascii_lowercase();
+        match read_foreground(ready) {
+            DesktopProbe::Foreground { app, title } => {
+                assert_eq!(title, TITLE, "標題要逐字讀回來，排除規則比對的就是它");
+                assert_eq!(app, expected_app, "app 要是排除規則比對的那個字串");
+            }
+            other => panic!("active window was set, got {other:?}"),
+        }
     }
 
     #[test]
