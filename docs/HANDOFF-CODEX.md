@@ -166,8 +166,16 @@ workspace 1,998 通過／0 失敗／3 忽略；fmt、clippy、Windows root／des
 Schema 19 → 20；備份、去敏 replay 匯出／匯入與忘記的連帶清除都有回歸。
 workspace 2,005 通過／0 失敗／3 忽略；兩個隱私突變都紅、還原後定點測試綠；
 fmt、clippy、Windows root／desktop、同意書文案／保存、brain outbound、no-network、
-no-keylogging 通過。PNG／RAG 測試使用合成畫面與獨立文字，尚未做真 Windows UIA 讀字驗收。
-下一步先補 Windows 原生讀字 fixture，再擴到目前文件的可見段落。
+no-keylogging 通過。該輪 PNG／RAG 測試使用合成畫面與獨立文字；後續原生 UIA 驗證見下。
+
+**同日原生 UIA 驗證與耗時補記（未發版）：** 獨立 Windows 測試行程開啟自有 WPF 視窗，
+透過正式 WindowsFocus／UIA 讀到繁中電話與更新文字；捲出可見區的文字、密碼欄、按鈕
+名稱與另一視窗下的舊許可皆被拒絕。CI run `35510612780` 的原生 UIA 與實錄／停止
+檢查通過。實錄也驗回 `25ce979` 漏計耗時的修正：新增「輔助讀字」與「脈絡核對」兩列，
+丟棄結果仍記實際成本。移除任一計時的突變都會使回歸失敗；還原後通過。
+本機 workspace 2,005／0／3 忽略，Windows root／desktop 編譯與 lint、隱私／同意檢查通過。
+下一刀把目前文件的可見段落接入同一套原生測試。
+
 
 ---
 
