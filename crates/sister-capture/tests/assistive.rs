@@ -18,6 +18,7 @@ struct Focus {
     pause_on_read: bool,
     change_on_read: bool,
     app: &'static str,
+    role: &'static str,
 }
 impl FocusSource for Focus {
     fn context(&mut self, _: i64) -> Result<PrivacyObservation> {
@@ -43,8 +44,8 @@ impl FocusSource for Focus {
             self.paused.set(true);
         }
         vec![AssistiveBlock {
-            text: format!("assistive receipt {} phone 0800-123-456", self.calls.get()),
-            role: "edit".into(),
+            text: format!("assistive receipt {}\nphone 0800-123-456", self.calls.get()),
+            role: self.role.into(),
             bbox: None,
         }]
     }
@@ -69,6 +70,7 @@ fn focus() -> Focus {
         pause_on_read: false,
         change_on_read: false,
         app: "notes.exe",
+        role: "edit",
     }
 }
 fn recorder(
@@ -96,12 +98,23 @@ fn recorder(
 
 #[test]
 fn assistive_only_text_reaches_rag_with_its_own_png_and_survives_reopen_then_forget() {
-    let dir = std::env::temp_dir().join(format!("sister-assistive-{}", std::process::id()));
+    roundtrip("edit");
+}
+
+#[test]
+fn document_paragraphs_reach_rag_with_their_own_png_and_survive_reopen_then_forget() {
+    roundtrip("document");
+}
+
+fn roundtrip(role: &'static str) {
+    let dir = std::env::temp_dir().join(format!("sister-assistive-{role}-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let mut config = Config::default();
     config.capture.ocr = false;
     config.capture.image_min_interval_ms = 0;
-    let mut rec = recorder(focus(), config, Some(dir.clone()));
+    let mut source = focus();
+    source.role = role;
+    let mut rec = recorder(source, config, Some(dir.clone()));
     let id = match rec.tick(1000).unwrap() {
         Tick::Kept { frame_id, .. } => frame_id,
         other => panic!("{other:?}"),
@@ -137,6 +150,7 @@ fn assistive_only_text_reaches_rag_with_its_own_png_and_survives_reopen_then_for
     assert_eq!(image.dimensions(), (8, 8));
     assert_eq!(image.as_raw(), &vec![255; 8 * 8 * 4]);
     assert_eq!(rec.db().assistive_blocks(id).unwrap()[0].bbox, None);
+    assert_eq!(rec.db().assistive_blocks(id).unwrap()[0].role, role);
     // Same pixels, new accessible text: don't silently discard it as a dHash duplicate.
     assert!(matches!(rec.tick(2000).unwrap(), Tick::Kept { .. }));
     assert_eq!(rec.db().search("receipt", 10).unwrap().len(), 2);
@@ -144,6 +158,7 @@ fn assistive_only_text_reaches_rag_with_its_own_png_and_survives_reopen_then_for
     rec.db().export_to(&backup).unwrap();
     let mut reopened = Db::open(&backup).unwrap();
     assert_eq!(reopened.assistive_blocks(id).unwrap().len(), 1);
+    assert_eq!(reopened.assistive_blocks(id).unwrap()[0].role, role);
     let draft = reopened
         .export_replay("assistive", 0, 3000)
         .unwrap()
@@ -169,8 +184,12 @@ fn assistive_only_text_reaches_rag_with_its_own_png_and_survives_reopen_then_for
 
 #[test]
 fn blocked_context_disabled_capture_and_disabled_assistive_never_call_the_source() {
-    for case in 0..6 {
+    for (role, case) in ["edit", "document"]
+        .into_iter()
+        .flat_map(|r| (0..6).map(move |c| (r, c)))
+    {
         let mut focus = focus();
+        focus.role = role;
         let calls = focus.calls.clone();
         let mut config = Config::default();
         config.capture.store_images = false;
@@ -199,8 +218,12 @@ fn blocked_context_disabled_capture_and_disabled_assistive_never_call_the_source
 
 #[test]
 fn pause_or_context_change_during_assistive_read_discards_text_and_frame() {
-    for change in [false, true] {
+    for (role, change) in ["edit", "document"]
+        .into_iter()
+        .flat_map(|r| [false, true].map(|c| (r, c)))
+    {
         let mut focus = focus();
+        focus.role = role;
         focus.pause_on_read = !change;
         focus.change_on_read = change;
         let paused = focus.paused.clone();

@@ -20,6 +20,20 @@ $edit.Margin = '16'
 $edit.Text = "$([char]0x96fb)$([char]0x8a71) 0800-123-456`r`nvisible@example.test" + ("`r`npadding" * 120) + "`r`nOFFSCREEN-SENTINEL"
 $window.Content = $edit
 
+# RichTextBox exposes the native Document control type and TextPattern. Keep it
+# read-only; scrolling changes the visible range without changing the document.
+$document = New-Object System.Windows.Controls.RichTextBox
+$document.IsReadOnly = $true
+$document.FontSize = 18
+$document.Margin = '16'
+$document.VerticalScrollBarVisibility = 'Auto'
+$lines = @("$([char]0x6587)$([char]0x4ef6) 0800-222-333", 'DOCUMENT-SECOND-PARAGRAPH') + (1..120 | ForEach-Object { "padding $_" }) + @('DOCUMENT-BOTTOM 02-9988-7766')
+foreach ($line in $lines) {
+    $paragraph = New-Object System.Windows.Documents.Paragraph
+    $paragraph.Inlines.Add((New-Object System.Windows.Documents.Run -ArgumentList $line))
+    $document.Document.Blocks.Add($paragraph)
+}
+
 $password = New-Object System.Windows.Controls.PasswordBox
 $password.Password = 'PASSWORD-SENTINEL'
 $password.Margin = '16'
@@ -62,6 +76,17 @@ $timer.Add_Tick({
             switch ($mode) {
                 'edit' { $edit.ScrollToHome(); $script:activeControl = $edit }
                 'changed' { $edit.Text = 'CHANGED-SENTINEL 02-2233-4455'; $script:activeControl = $edit }
+                'document' {
+                    $window.Content = $document
+                    $document.CaretPosition = $document.Document.ContentStart
+                    $document.ScrollToHome()
+                    $script:activeControl = $document
+                }
+                'document-scrolled' {
+                    $document.CaretPosition = $document.Document.ContentEnd
+                    $document.ScrollToEnd()
+                    $script:activeControl = $document
+                }
                 'password' { $window.Content = $password; $script:activeControl = $password }
                 'button' { $window.Content = $button; $script:activeControl = $button }
                 'other' { $other.Show(); $script:activeWindow = $other; $script:activeControl = $otherEdit }

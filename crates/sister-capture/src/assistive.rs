@@ -30,26 +30,49 @@ impl ReadWindow {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TextRole {
+    Edit,
+    Document,
+}
+impl TextRole {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Edit => "edit",
+            Self::Document => "document",
+        }
+    }
+}
+
 /// `eligible` must positively establish exact foreground ownership, unchanged focus,
-/// an Edit control, IsPassword=false and IsOffscreen=false. Unknown is rejection.
+/// an Edit or Document control, IsPassword=false and IsOffscreen=false. Unknown is rejection.
 pub(crate) trait VisibleText {
     fn context_matches(&mut self) -> bool;
-    fn is_edit(&mut self) -> Option<bool>;
+    fn role(&mut self) -> Option<TextRole>;
     fn is_password(&mut self) -> Option<bool>;
     fn is_offscreen(&mut self) -> Option<bool>;
     fn range_count(&mut self) -> Option<usize>;
     fn text(&mut self, index: usize, limit: usize) -> Option<String>;
 }
 
-fn eligible(source: &mut impl VisibleText) -> bool {
-    source.context_matches()
-        && source.is_edit() == Some(true)
-        && source.is_password() == Some(false)
-        && source.is_offscreen() == Some(false)
+fn eligible(source: &mut impl VisibleText) -> Option<TextRole> {
+    if !source.context_matches()
+        || source.is_password() != Some(false)
+        || source.is_offscreen() != Some(false)
+    {
+        return None;
+    }
+    source.role()
 }
 
 pub(crate) fn collect(source: &mut impl VisibleText, window: &ReadWindow) -> Vec<AssistiveBlock> {
-    if !window.active() || !eligible(source) || !window.active() {
+    if !window.active() {
+        return Vec::new();
+    }
+    let Some(role) = eligible(source) else {
+        return Vec::new();
+    };
+    if !window.active() {
         return Vec::new();
     }
     let Some(count) = source.range_count() else {
@@ -61,7 +84,7 @@ pub(crate) fn collect(source: &mut impl VisibleText, window: &ReadWindow) -> Vec
         if remaining == 0 {
             break;
         }
-        if !window.active() || !eligible(source) || !window.active() {
+        if !window.active() || eligible(source) != Some(role) || !window.active() {
             return Vec::new();
         }
         let Some(text) = source.text(index, remaining) else {
@@ -77,12 +100,12 @@ pub(crate) fn collect(source: &mut impl VisibleText, window: &ReadWindow) -> Vec
         if !text.is_empty() {
             out.push(AssistiveBlock {
                 text: text.into(),
-                role: "edit".into(),
+                role: role.as_str().into(),
                 bbox: None,
             });
         }
     }
-    if !window.active() || !eligible(source) || !window.active() {
+    if !window.active() || eligible(source) != Some(role) || !window.active() {
         return Vec::new();
     }
     out
@@ -96,16 +119,17 @@ mod tests {
         reads: usize,
         lose_focus: bool,
         cancel: Option<ReadWindow>,
-        edit: Option<bool>,
+        role: Option<TextRole>,
         password: Option<bool>,
         offscreen: Option<bool>,
+        change_role: bool,
     }
     impl VisibleText for Source {
         fn context_matches(&mut self) -> bool {
             self.allowed
         }
-        fn is_edit(&mut self) -> Option<bool> {
-            self.edit
+        fn role(&mut self) -> Option<TextRole> {
+            self.role
         }
         fn is_password(&mut self) -> Option<bool> {
             self.password
@@ -118,6 +142,9 @@ mod tests {
         }
         fn text(&mut self, _: usize, _: usize) -> Option<String> {
             self.reads += 1;
+            if self.change_role {
+                self.role = Some(TextRole::Edit);
+            }
             if self.lose_focus {
                 self.allowed = false;
             }
@@ -133,29 +160,33 @@ mod tests {
             reads: 0,
             lose_focus: false,
             cancel: None,
-            edit: Some(true),
+            role: Some(TextRole::Edit),
             password: Some(false),
             offscreen: Some(false),
+            change_role: false,
         }
     }
     #[test]
-    fn password_offscreen_nonedit_and_unknown_never_read() {
-        for value in [Some(true), None] {
+    fn password_offscreen_and_unknown_role_never_read() {
+        for (role, value) in [TextRole::Edit, TextRole::Document]
+            .into_iter()
+            .flat_map(|role| [Some(true), None].map(|value| (role, value)))
+        {
             let mut s = source();
+            s.role = Some(role);
             s.password = value;
             assert!(collect(&mut s, &ReadWindow::new()).is_empty());
             assert_eq!(s.reads, 0);
             let mut s = source();
+            s.role = Some(role);
             s.offscreen = value;
             assert!(collect(&mut s, &ReadWindow::new()).is_empty());
             assert_eq!(s.reads, 0);
         }
-        for value in [Some(false), None] {
-            let mut s = source();
-            s.edit = value;
-            assert!(collect(&mut s, &ReadWindow::new()).is_empty());
-            assert_eq!(s.reads, 0);
-        }
+        let mut s = source();
+        s.role = None;
+        assert!(collect(&mut s, &ReadWindow::new()).is_empty());
+        assert_eq!(s.reads, 0);
     }
 
     #[test]
@@ -172,14 +203,30 @@ mod tests {
     }
     #[test]
     fn late_result_or_focus_change_discards_everything() {
-        for cancelled in [false, true] {
+        for (role, cancelled) in [TextRole::Edit, TextRole::Document]
+            .into_iter()
+            .flat_map(|role| [false, true].map(|cancelled| (role, cancelled)))
+        {
             let window = ReadWindow::new();
             let mut source = source();
+            source.role = Some(role);
             source.lose_focus = !cancelled;
             source.cancel = cancelled.then(|| window.clone());
             assert!(collect(&mut source, &window).is_empty());
             assert_eq!(source.reads, 1);
         }
+    }
+    #[test]
+    fn document_keeps_its_role_and_rejects_a_role_change_during_read() {
+        let mut s = source();
+        s.role = Some(TextRole::Document);
+        let out = collect(&mut s, &ReadWindow::new());
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].role, "document");
+        assert_eq!(out[0].bbox, None);
+        assert!(out[0].text.starts_with("電話 0800-123-456"));
+        s.change_role = true;
+        assert!(collect(&mut s, &ReadWindow::new()).is_empty());
     }
     #[test]
     fn provider_text_is_bounded_and_has_no_invented_coordinates() {

@@ -1,6 +1,6 @@
-//! Only the focused, visible, non-password Edit control. No document/tree dump,
+//! Only the focused, visible, non-password Edit or Document control. No full-document/tree dump,
 //! ValuePattern fallback, focus changes, content cache or event/keystroke listener.
-use crate::assistive::{self, ReadWindow, VisibleText};
+use crate::assistive::{self, ReadWindow, TextRole, VisibleText};
 use sister_core::model::AssistiveBlock;
 use windows::{
     Win32::{
@@ -8,7 +8,8 @@ use windows::{
         UI::{
             Accessibility::{
                 IUIAutomation, IUIAutomationElement, IUIAutomationTextPattern,
-                IUIAutomationTextRangeArray, UIA_EditControlTypeId, UIA_TextPatternId,
+                IUIAutomationTextRangeArray, UIA_DocumentControlTypeId, UIA_EditControlTypeId,
+                UIA_TextPatternId,
             },
             WindowsAndMessaging::GetForegroundWindow,
         },
@@ -28,7 +29,7 @@ pub(super) fn read(
     let Ok(element) = (unsafe { automation.GetFocusedElement() }) else {
         return Vec::new();
     };
-    let mut source = FocusedEdit {
+    let mut source = FocusedText {
         automation,
         hwnd,
         pid,
@@ -38,7 +39,7 @@ pub(super) fn read(
     };
     assistive::collect(&mut source, window)
 }
-struct FocusedEdit<'a> {
+struct FocusedText<'a> {
     automation: &'a IUIAutomation,
     hwnd: HWND,
     pid: u32,
@@ -46,7 +47,7 @@ struct FocusedEdit<'a> {
     element: IUIAutomationElement,
     ranges: Option<IUIAutomationTextRangeArray>,
 }
-impl FocusedEdit<'_> {
+impl FocusedText<'_> {
     fn matches(&self) -> Option<bool> {
         unsafe {
             if GetForegroundWindow() != self.hwnd
@@ -78,12 +79,16 @@ impl FocusedEdit<'_> {
         }
     }
 }
-impl VisibleText for FocusedEdit<'_> {
+impl VisibleText for FocusedText<'_> {
     fn context_matches(&mut self) -> bool {
         self.matches() == Some(true)
     }
-    fn is_edit(&mut self) -> Option<bool> {
-        Some(unsafe { self.element.CurrentControlType() }.ok()? == UIA_EditControlTypeId)
+    fn role(&mut self) -> Option<TextRole> {
+        match unsafe { self.element.CurrentControlType() }.ok()? {
+            kind if kind == UIA_EditControlTypeId => Some(TextRole::Edit),
+            kind if kind == UIA_DocumentControlTypeId => Some(TextRole::Document),
+            _ => None,
+        }
     }
     fn is_password(&mut self) -> Option<bool> {
         Some(unsafe { self.element.CurrentIsPassword() }.ok()?.as_bool())

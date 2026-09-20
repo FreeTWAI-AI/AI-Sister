@@ -104,11 +104,11 @@ impl Drop for Fixture {
         let _ = std::fs::remove_dir_all(&self.dir);
     }
 }
-fn text(blocks: &[AssistiveBlock]) -> String {
+fn text(blocks: &[AssistiveBlock], role: &str) -> String {
     assert!(
         blocks
             .iter()
-            .all(|block| block.role == "edit" && block.bbox.is_none())
+            .all(|block| block.role == role && block.bbox.is_none())
     );
     blocks
         .iter()
@@ -119,12 +119,12 @@ fn text(blocks: &[AssistiveBlock]) -> String {
 
 #[test]
 #[ignore = "owns the Windows foreground; CI runs this target in a separate process"]
-fn native_uia_reads_visible_text_and_rejects_passwords_nonedit_and_stale_windows() {
+fn native_uia_reads_visible_edits_and_documents_and_rejects_excluded_text() {
     let mut fixture = Fixture::start();
     fixture.show("edit");
     let mut focus = WindowsFocus::new();
     let permit = fixture.observe(&mut focus, SensitiveFieldState::Clear);
-    let initial = text(&focus.assistive_text(permit));
+    let initial = text(&focus.assistive_text(permit), "edit");
     assert!(
         initial.contains("電話 0800-123-456"),
         "native UIA did not read the visible Chinese phone line"
@@ -137,11 +137,26 @@ fn native_uia_reads_visible_text_and_rejects_passwords_nonedit_and_stale_windows
 
     // Same HWND, title and control; values must be read again instead of cached.
     fixture.show("changed");
-    let changed = text(&focus.assistive_text(permit));
+    let changed = text(&focus.assistive_text(permit), "edit");
     assert!(changed.contains("CHANGED-SENTINEL 02-2233-4455"));
     assert!(!changed.contains("0800-123-456"));
 
+    fixture.show("document");
+    let document_permit = fixture.observe(&mut focus, SensitiveFieldState::Clear);
+    let document = text(&focus.assistive_text(document_permit), "document");
+    assert!(document.contains("文件 0800-222-333"));
+    assert!(document.contains("DOCUMENT-SECOND-PARAGRAPH"));
+    assert!(!document.contains("DOCUMENT-BOTTOM"));
+
+    fixture.show("document-scrolled");
+    let scrolled = text(&focus.assistive_text(document_permit), "document");
+    assert!(scrolled.contains("DOCUMENT-BOTTOM 02-9988-7766"));
+    assert!(!scrolled.contains("0800-222-333"));
+    assert!(!scrolled.contains("DOCUMENT-SECOND-PARAGRAPH"));
+
     fixture.show("password");
+    assert!(!focus.is_current(document_permit).unwrap());
+    assert!(focus.assistive_text(document_permit).is_empty());
     assert!(!focus.is_current(permit).unwrap());
     assert!(focus.assistive_text(permit).is_empty());
     let password_permit = fixture.observe(&mut focus, SensitiveFieldState::Focused);
@@ -158,8 +173,8 @@ fn native_uia_reads_visible_text_and_rejects_passwords_nonedit_and_stale_windows
     assert!(!focus.is_current(button_permit).unwrap());
     assert!(focus.assistive_text(button_permit).is_empty());
     let other_permit = fixture.observe(&mut focus, SensitiveFieldState::Clear);
-    assert!(text(&focus.assistive_text(other_permit)).contains("OTHER-WINDOW-SENTINEL"));
+    assert!(text(&focus.assistive_text(other_permit), "edit").contains("OTHER-WINDOW-SENTINEL"));
     println!(
-        "SISTER-UIA: VERIFIED visible-chinese fresh-text no-offscreen no-password no-button stale-window-denied"
+        "SISTER-UIA: VERIFIED visible-chinese fresh-text document-paragraphs document-scroll no-offscreen no-password no-button stale-window-denied"
     );
 }
