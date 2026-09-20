@@ -1,6 +1,9 @@
 # HANDOFF — 交給下一位 agent（Codex）
 
-**更新於 2026-09-19（§1 由席 Claude seat-authored 改寫）；最後出貨點仍是 alpha.143 `2de931b`，本機另有 15 個未推的 commit——接力細節見**本機**（未追蹤，不在這個 repo 裡）的 `HANDOFF-CODEX-SEAT-2026-09-19.md`。** 這份是「打開就能接著做」的交接紀錄，不是
+**更新於 2026-09-19（Codex 續接）；最後出貨點仍是 alpha.143 `2de931b`，alpha.144
+已備妥、尚未 push／tag。** Claude 的原始交接保留在本機的
+`HANDOFF-CODEX-SEAT-2026-09-19.md`，已加入本機 Git exclude，不進公開提交。
+這份是「打開就能接著做」的交接紀錄，不是
 路線圖。路線圖在 `docs/PHASES.md`，規格在 `docs/SPEC.md`，產品定義在
 `docs/PRODUCT.md`，工作紀律在 `AGENTS.md`。四份都要讀，順序就是這個順序。
 
@@ -84,13 +87,24 @@
 | 這一段的執行者 | 原主段是 Claude Code（Opus 5, 1M context），session `e74b7a6f-34e8-4500-925c-8e0d020ac13c`；alpha.142／143 由 Codex 續接；2026-09-15～16 的 15 個 commit 由 Claude Code session `5c0ee346` 做 |
 | 時間範圍 | 2026-09-09T05:04:30Z → 2026-09-16（UTC；中途壓縮數十次） |
 | **已公開的最後一版** | **`v0.1.0-alpha.143` → `2de931b`**，published 2026-09-15 |
-| **本機 HEAD** | **`1437502`，ahead `origin/main` 15 個 commit，未 push、未 tag** |
+| **2026-09-19 接手點** | **`e5645c7`，當時 ahead `origin/main` 16 個 commit，未 push、未 tag**；下述 Codex 續接另有測試與交接修正 |
 | 下一版版號 | 已 bump 到 `0.1.0-alpha.144`（17 個位置一致，`check-release-version.py` 綠），`docs/RELEASE-NOTES.md` 的 `## v0.1.0-alpha.144` 那一節已寫好 |
 | alpha.143 CI | tag run `34959625002` 第一次就八個 job 全部 `success`；Release 四個 artifact 齊全 |
 | alpha.142 CI | tag run `34932696475` attempt 2 八個 job 全部 `success` |
-| 本機閘門 | 本機的 gates-all.sh（見第 7 節，**不在 repo 裡**）報 **通過 52 條，失敗 0 條** |
+| 本機閘門 | Claude 收據：`e5645c7` 已追蹤內容的 gates-all.sh **52 通過／0 失敗**；Codex 續接驗證範圍見下，不冒充重新跑完 52 條 |
 | alpha.141 真機 | 正式 Setup 覆蓋成功；舊 persona／同意／Grok／記憶保留，本機出處可點回原截圖 |
 | alpha.141 後續 | 真機 receipt／交接更新；CI 的 GitHub Actions 已升到 Node 24 majors，branch run `34793019345` 六個平台 job 全綠。沒有產品程式碼或新出貨內容 |
+
+**Codex 續接（2026-09-19）：**
+
+- `cargo test --workspace`：1,982 通過、0 失敗、3 忽略。Persona、主對話與時間軸三支
+  renderer 檢查通過。主對話的等待秒數測試原以 5 秒自動交回答案、約 4.36 秒取樣，
+  本次取樣時答案已返回，三個斷言讀到 `null`；改成完成等待畫面的斷言後才 resolve
+  答案，原斷言保留、整支重驗通過。產品程式未改。
+- 原始交接把三條 `codex/overview-*` 分支列為未落地，**這是誤判**。三條的
+  `git cherry main` 全部為 `-`；等價提交是 `2512920`、`0a9c82d`、`7b43b92`，
+  並由 `c85e648` 完成、隨 alpha.116 出貨。不需要 rebase 或重寫；分支保留。
+- alpha.144 新增的六項 Windows 人工驗收仍未勾；本機 renderer 不代替真 WebView2。
 
 ---
 
@@ -223,6 +237,12 @@ exit criterion 仍未勾，是因為同站 path、redirect 與當場按的邊界
 ---
 
 ## 5. 下一步最小可驗證步驟（照順序，打開就能做）
+
+**2026-09-19 現行下一步：** Ted 明確授權後 push `main`，等 branch CI 通過，
+再對通過的 commit 打 `v0.1.0-alpha.144` 並推送 tag；確認 Release 四個 artifact
+公開且說明與 `scripts/release-notes.sh` 產出的前綴相符。版號與說明已備妥，不再 bump。
+這次交接明列「push 仍問」，尚未收到解除此限制的授權。下方步驟 1–2 是歷史完成紀錄，
+步驟 3 的真機待辦繼續有效，連同 alpha.144 新增項目用最新正式 artifact 驗收。
 
 ### 步驟 1（已完成）：確認交接點的 CI
 

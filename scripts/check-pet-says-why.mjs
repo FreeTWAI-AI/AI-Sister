@@ -668,9 +668,13 @@ console.log("② 第一題就答不成（資料庫打不開）");
 
 console.log("③ 送出去了他就看得到，等久了才多一個秒數");
 {
+  let finishAsk;
+  const pendingAnswer = new Promise((resolve) => {
+    finishAsk = resolve;
+  });
   const p = await open({
-    // 5 秒才回，比 SLOW_MS（4 秒）久。
-    ask: () => new Promise((r) => setTimeout(() => r(answer()), 5000)),
+    // 看完等待中的畫面才交回答案；runner 延遲不能讓答案先到、把秒數收掉。
+    ask: () => pendingAnswer,
     recording_state: "recording",
   });
   void p.type("三天前那通電話");
@@ -687,7 +691,8 @@ console.log("③ 送出去了他就看得到，等久了才多一個秒數");
   check("輪詢過後那一格還在", /^思考中…/u.test(p.thinking() ?? ""), p.thinking());
   // 她的泡泡從頭到尾都沒被拿去講儀表板。
   check("她從頭到尾沒解釋自己為什麼慢", !/秒|CLI|多半/u.test(p.line()), p.line());
-  await tick(1200);
+  finishAsk(answer());
+  await tick();
   check("答案回來那一格就不在了", p.thinking() === null, p.thinking());
 }
 
