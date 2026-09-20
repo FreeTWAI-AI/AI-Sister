@@ -136,6 +136,12 @@ no-keylogging、主對話與證據視窗檢查通過。這些不代替真 Window
 工作區測試 1,994 通過／0 失敗／3 忽略；fmt、clippy、同意書文案／保存、brain outbound、
 no-network 與 no-keylogging 通過。
 
+**同日 macOS 編譯修復（未發版）：** doctor 的前景探測結果與文案分支按實際使用平台
+編譯，測試保留全部狀態；macOS 維持 `NotAsked`，修正原生 clippy 的 dead-code 失敗。
+Windows root／desktop 編譯與 clippy、host fmt／clippy、同意書文案與 no-network 通過。
+workspace 首輪有一條同意鎖測試在已簽後回 `Busy`；未改程式，該條單跑與整批重跑均過，
+重跑為 1,994 通過／0 失敗／3 忽略。偶發 `Busy` 尚未定位，不當成已修復。
+
 ---
 
 ## 2. Spec → 現在：八個 Phase 的完成度

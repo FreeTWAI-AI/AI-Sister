@@ -18019,7 +18019,7 @@ pub mod doctor {
         degraded: Vec<String>,
     }
 
-    /// 前景視窗的三態，不是 `Option`。
+    /// 前景視窗的探測結果，不是 `Option`。
     ///
     /// `None` 以前同時裝著兩件事：「問了，讀不到」和「這份 doctor 根本沒問」。
     /// 印出來的是前者——於是 Linux X11 Developer Preview 上那兩行寫著
@@ -18039,16 +18039,16 @@ pub mod doctor {
         /// 問了，但判不出答案——例如判不出這條桌面是不是目前登入者的。
         /// 和 `NotAsked` 一樣畫 `?`，但句子不一樣：一個是沒問，一個是問了。
         ///
-        /// 目前只有 Linux 的 `preflight` 生得出這一格（`UnknownReason` 四種）。
-        /// Windows 那條路上「問了而答不出來」全部走 `Unreadable`——UIA 答不出
-        /// privacy context 的時候 recorder 就在內容來源前停下，所以「這些規則
-        /// 不會命中」是講得出口的。那半邊在這裡沒有呼叫端是**對的**，不是漏接，
-        /// 所以只在那些平台關掉 dead_code，不是整個關掉。
-        #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+        /// 只有 Linux 的 `preflight` 會建立這一格；Windows 走 `Unreadable`。
+        /// 測試仍保留每種結果，驗證共用文案不把「沒問」說成「讀不到」。
+        #[cfg(any(target_os = "linux", test))]
         Uncheckable { why: String },
         /// 問了，讀不到前景視窗。`why` 是那一次探測自己講的話。
+        /// 只有 Windows／Linux 的 doctor 會探測，其他平台保留 `NotAsked`。
+        #[cfg(any(windows, target_os = "linux", test))]
         Unreadable { why: Option<String> },
         /// 讀到了。兩個欄位各自可能是空字串（讀得到視窗但讀不到那一項）。
+        #[cfg(any(windows, target_os = "linux", test))]
         Read { app: String, title: String },
     }
 
@@ -18064,12 +18064,15 @@ pub mod doctor {
     fn excluded_apps_row(live_stopped: bool, probe: &FocusProbe) -> (&'static str, String) {
         match (live_stopped, probe) {
             (true, _) => ("■", "，全停閘門擋住，沒有探測".to_string()),
+            #[cfg(any(windows, target_os = "linux", test))]
             (false, FocusProbe::Read { app, .. }) if !app.is_empty() => {
                 ("✓", format!("，現在讀到的是 {app}"))
             }
+            #[cfg(any(windows, target_os = "linux", test))]
             (false, FocusProbe::Read { .. }) => {
                 ("?", "，但現在沒有前景視窗，這一刻測不出來".to_string())
             }
+            #[cfg(any(windows, target_os = "linux", test))]
             (false, FocusProbe::Unreadable { why }) => (
                 "✗",
                 match why {
@@ -18079,6 +18082,7 @@ pub mod doctor {
                     None => "（讀不到前景 app，privacy gate 不會把未知狀態當安全放行）".to_string(),
                 },
             ),
+            #[cfg(any(target_os = "linux", test))]
             (false, FocusProbe::Uncheckable { why }) => {
                 ("?", format!("（{why}，規則會不會命中這裡答不出來）"))
             }
@@ -18095,13 +18099,16 @@ pub mod doctor {
     fn excluded_titles_row(live_stopped: bool, probe: &FocusProbe) -> (&'static str, String) {
         match (live_stopped, probe) {
             (true, _) => ("■", "，全停閘門擋住，沒有探測".to_string()),
+            #[cfg(any(windows, target_os = "linux", test))]
             (false, FocusProbe::Read { title, .. }) if !title.is_empty() => (
                 "✓",
                 format!("，現在讀到的是「{}」", crate::fmt::one_line(title, 40)),
             ),
+            #[cfg(any(windows, target_os = "linux", test))]
             (false, FocusProbe::Read { .. }) => ("?", "，但現在這個視窗沒有標題可比對".to_string()),
             // 講的是**這一刻**讀不到，不是「本平台」做不到：同一支 doctor 在
             // 讀得到的機器上跑會走到上面兩格，而那句話會替整個平台背書。
+            #[cfg(any(windows, target_os = "linux", test))]
             (false, FocusProbe::Unreadable { why }) => (
                 "✗",
                 match why {
@@ -18109,6 +18116,7 @@ pub mod doctor {
                     None => "（這一刻讀不到前景視窗，所以這些規則一條都不會命中）".to_string(),
                 },
             ),
+            #[cfg(any(target_os = "linux", test))]
             (false, FocusProbe::Uncheckable { why }) => {
                 ("?", format!("（{why}，規則會不會命中這裡答不出來）"))
             }
