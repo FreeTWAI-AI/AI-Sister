@@ -705,6 +705,7 @@ mod tests {
 
     fn frame(at_ms: Millis, app: &str, title: &str, text: &str) -> Event {
         Event::Frame {
+            assistive: Vec::new(),
             at_ms,
             monitor: 0,
             width: 800,

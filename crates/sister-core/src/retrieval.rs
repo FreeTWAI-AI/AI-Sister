@@ -183,6 +183,7 @@ mod tests {
         db.insert_frame(
             session,
             &FrameCapture {
+                assistive: Vec::new(),
                 ts: 100,
                 monitor: 0,
                 width: 800,
@@ -264,6 +265,7 @@ mod tests {
         db.insert_frame(
             session,
             &FrameCapture {
+                assistive: Vec::new(),
                 ts: yesterday_15,
                 monitor: 0,
                 width: 800,
@@ -326,6 +328,7 @@ mod tests {
                 .insert_frame(
                     session,
                     &FrameCapture {
+                        assistive: Vec::new(),
                         ts,
                         monitor: 0,
                         width: 800,

@@ -9,7 +9,9 @@
 //! 不重試、不阻塞；能力缺口另由報告說清楚。
 
 use anyhow::Result;
-use sister_core::model::{ClipboardEvent, InputTick, Millis, OcrBlock, PrivacyContext};
+use sister_core::model::{
+    AssistiveBlock, ClipboardEvent, InputTick, Millis, OcrBlock, PrivacyContext,
+};
 use std::num::NonZeroU64;
 use std::time::{Duration, Instant};
 
@@ -223,6 +225,11 @@ pub trait FocusSource {
     /// 這個比對不讀內容；Windows 只重讀 HWND + PID。問不到是
     /// error/false，呼叫端都必須在持久化 clipboard/frame 前丟掉。
     fn is_current(&mut self, permit: CapturePermit) -> Result<bool>;
+
+    /// 綁定同一次前景許可的可見文字；預設沒有此能力。
+    fn assistive_text(&mut self, _permit: CapturePermit) -> Vec<AssistiveBlock> {
+        Vec::new()
+    }
 
     /// 見 [`Backend::url_capture`]。
     fn url_capture(&self) -> sister_core::capabilities::UrlCapture {
@@ -678,6 +685,12 @@ pub trait Backend {
         None
     }
     fn recognize(&mut self, frame: &RawFrame) -> OcrAttempt;
+
+    /// 只在這張畫面的擷取許可仍有效時讀前景可見文字。
+    /// 不支援或讀不到就不補字；不得拿 OCR 冒充輔助介面結果。
+    fn assistive_text(&mut self, _permit: CapturePermit) -> Vec<AssistiveBlock> {
+        Vec::new()
+    }
     fn recheck_ocr_dhash_duplicate(&mut self, _frame: &RawFrame) -> DhashRecheck {
         DhashRecheck::unchanged_without_gate()
     }
@@ -785,6 +798,17 @@ where
     fn recognize(&mut self, frame: &RawFrame) -> OcrAttempt {
         self.ocr.recognize_frame(frame)
     }
+    fn assistive_text(&mut self, permit: CapturePermit) -> Vec<AssistiveBlock> {
+        if !self.focus.is_current(permit).unwrap_or(false) {
+            return Vec::new();
+        }
+        let blocks = self.focus.assistive_text(permit);
+        if !self.focus.is_current(permit).unwrap_or(false) {
+            return Vec::new();
+        }
+        blocks
+    }
+
     fn recheck_ocr_dhash_duplicate(&mut self, frame: &RawFrame) -> DhashRecheck {
         self.ocr.recheck_dhash_duplicate(frame)
     }

@@ -1,0 +1,119 @@
+//! Only the focused, visible, non-password Edit control. No document/tree dump,
+//! ValuePattern fallback, focus changes, content cache or event/keystroke listener.
+use crate::assistive::{self, ReadWindow, VisibleText};
+use sister_core::model::AssistiveBlock;
+use windows::{
+    Win32::{
+        Foundation::HWND,
+        UI::{
+            Accessibility::{
+                IUIAutomation, IUIAutomationElement, IUIAutomationTextPattern,
+                IUIAutomationTextRangeArray, UIA_EditControlTypeId, UIA_TextPatternId,
+            },
+            WindowsAndMessaging::GetForegroundWindow,
+        },
+    },
+    core::Interface,
+};
+
+pub(super) fn read(
+    automation: &IUIAutomation,
+    hwnd: HWND,
+    pid: u32,
+    window: &ReadWindow,
+) -> Vec<AssistiveBlock> {
+    let Ok(root) = (unsafe { automation.ElementFromHandle(hwnd) }) else {
+        return Vec::new();
+    };
+    let Ok(element) = (unsafe { automation.GetFocusedElement() }) else {
+        return Vec::new();
+    };
+    let mut source = FocusedEdit {
+        automation,
+        hwnd,
+        pid,
+        root,
+        element,
+        ranges: None,
+    };
+    assistive::collect(&mut source, window)
+}
+struct FocusedEdit<'a> {
+    automation: &'a IUIAutomation,
+    hwnd: HWND,
+    pid: u32,
+    root: IUIAutomationElement,
+    element: IUIAutomationElement,
+    ranges: Option<IUIAutomationTextRangeArray>,
+}
+impl FocusedEdit<'_> {
+    fn matches(&self) -> Option<bool> {
+        unsafe {
+            if GetForegroundWindow() != self.hwnd
+                || super::focus::process_id(self.hwnd) != Some(self.pid)
+            {
+                return Some(false);
+            }
+            let focused = self.automation.GetFocusedElement().ok()?;
+            if !self
+                .automation
+                .CompareElements(&focused, &self.element)
+                .ok()?
+                .as_bool()
+            {
+                return Some(false);
+            }
+            super::uia::belongs_to_root(self.automation, &self.element, &self.root)?;
+            let (_, monitor) = super::screen::focused_monitor(self.hwnd)?;
+            let bounds = self.element.CurrentBoundingRectangle().ok()?;
+            // Another monitor's text cannot use this frame as its evidence.
+            Some(
+                bounds.right > bounds.left
+                    && bounds.bottom > bounds.top
+                    && bounds.left >= monitor.left
+                    && bounds.top >= monitor.top
+                    && bounds.right <= monitor.right
+                    && bounds.bottom <= monitor.bottom,
+            )
+        }
+    }
+}
+impl VisibleText for FocusedEdit<'_> {
+    fn context_matches(&mut self) -> bool {
+        self.matches() == Some(true)
+    }
+    fn is_edit(&mut self) -> Option<bool> {
+        Some(unsafe { self.element.CurrentControlType() }.ok()? == UIA_EditControlTypeId)
+    }
+    fn is_password(&mut self) -> Option<bool> {
+        Some(unsafe { self.element.CurrentIsPassword() }.ok()?.as_bool())
+    }
+    fn is_offscreen(&mut self) -> Option<bool> {
+        Some(unsafe { self.element.CurrentIsOffscreen() }.ok()?.as_bool())
+    }
+    fn range_count(&mut self) -> Option<usize> {
+        unsafe {
+            let pattern: IUIAutomationTextPattern = self
+                .element
+                .GetCurrentPattern(UIA_TextPatternId)
+                .ok()?
+                .cast()
+                .ok()?;
+            // https://learn.microsoft.com/en-us/windows/win32/api/uiautomationclient/nf-uiautomationclient-iuiautomationtextpattern-getvisibleranges
+            let ranges = pattern.GetVisibleRanges().ok()?;
+            let count = usize::try_from(ranges.Length().ok()?).ok()?;
+            self.ranges = Some(ranges);
+            Some(count)
+        }
+    }
+    fn text(&mut self, index: usize, limit: usize) -> Option<String> {
+        unsafe {
+            let range = self
+                .ranges
+                .as_ref()?
+                .GetElement(i32::try_from(index).ok()?)
+                .ok()?;
+            Some(range.GetText(i32::try_from(limit).ok()?).ok()?.to_string())
+        }
+    }
+}

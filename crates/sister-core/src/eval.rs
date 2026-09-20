@@ -1601,10 +1601,16 @@ fn event_supports_item(
 /// 避免畫面顯示一種證據、存檔卻按另一套規則拒絕。
 pub fn evidence_surfaces(event: &Event) -> Vec<(SourceKind, String)> {
     match event {
-        Event::Frame { ocr, .. } => ocr
+        Event::Frame { ocr, assistive, .. } => ocr
             .iter()
             .filter(|block| !block.text.trim().is_empty())
             .map(|block| (SourceKind::Ocr, block.text.clone()))
+            .chain(
+                assistive
+                    .iter()
+                    .filter(|block| !block.text.trim().is_empty())
+                    .map(|block| (SourceKind::Assistive, block.text.clone())),
+            )
             .collect(),
         Event::Focus { snapshot, .. } => {
             let mut out = Vec::new();
@@ -1685,6 +1691,7 @@ mod tests {
             redactions: RedactionSummary::default(),
             events: vec![
                 Event::Frame {
+                    assistive: Vec::new(),
                     at_ms: 500,
                     monitor: 0,
                     width: 800,
@@ -1702,6 +1709,7 @@ mod tests {
                     }],
                 },
                 Event::Frame {
+                    assistive: Vec::new(),
                     at_ms: 1_500,
                     monitor: 0,
                     width: 800,
@@ -1783,6 +1791,7 @@ mod tests {
     fn v1_rejects_multiple_evidence_events_instead_of_overstating_recall() {
         let (mut corpus, mut questions) = fixture();
         corpus.events.push(Event::Frame {
+            assistive: Vec::new(),
             at_ms: 2_000,
             monitor: 0,
             width: 800,
@@ -1814,6 +1823,7 @@ mod tests {
         corpus.events.insert(
             1,
             Event::Frame {
+                assistive: Vec::new(),
                 at_ms: 500,
                 monitor: 1,
                 width: 800,

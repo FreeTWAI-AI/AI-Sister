@@ -157,6 +157,18 @@ handle；簽署、撤回與交易失敗都有回歸，子行程仍活著時就�
 workspace 1,998 通過／0 失敗／3 忽略；fmt、clippy、Windows root／desktop、同意書
 文案／保存、brain outbound、no-network、no-keylogging 通過。
 
+
+**同日 Windows 輔助讀字（未發版）：** UIA 另一路讀取前景 Edit 控制項的可見文字，
+最多 16 段／8,192 字；沿用 HWND、PID 與擷取許可，讀取前後核對焦點、密碼與可見狀態，
+跨螢幕控制項不補字。內容工作執行緒與隱私探測分開；逾時結果丟棄，不改 OCR 退路。
+文字在慢 OCR 前取得，以 `assistive` 分開入庫、抽事實並供 RAG，引用同次保留幀；
+同圖的 OCR／UIA 不重算目擊次數，小幅文字改變也不被 dHash 吞掉。
+Schema 19 → 20；備份、去敏 replay 匯出／匯入與忘記的連帶清除都有回歸。
+workspace 2,005 通過／0 失敗／3 忽略；兩個隱私突變都紅、還原後定點測試綠；
+fmt、clippy、Windows root／desktop、同意書文案／保存、brain outbound、no-network、
+no-keylogging 通過。PNG／RAG 測試使用合成畫面與獨立文字，尚未做真 Windows UIA 讀字驗收。
+下一步先補 Windows 原生讀字 fixture，再擴到目前文件的可見段落。
+
 ---
 
 ## 2. Spec → 現在：八個 Phase 的完成度

@@ -1025,6 +1025,7 @@ mod tests {
         )
         .expect("focus c");
         let frame = FrameCapture {
+            assistive: Vec::new(),
             ts: ts + 30_000,
             monitor: 0,
             width: 100,

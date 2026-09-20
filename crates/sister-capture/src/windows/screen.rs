@@ -170,7 +170,7 @@ pub fn session_locked() -> bool {
 }
 
 /// 前景視窗所在的那一台螢幕，以及它的桌面座標矩形。
-fn focused_monitor(hwnd: HWND) -> Option<(HMONITOR, RECT)> {
+pub(super) fn focused_monitor(hwnd: HWND) -> Option<(HMONITOR, RECT)> {
     unsafe {
         // hwnd 為 null 時這個旗標會給主螢幕，正是我們要的退路
         let mon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTOPRIMARY);

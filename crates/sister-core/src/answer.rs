@@ -390,6 +390,7 @@ mod tests {
         db.insert_frame(
             s,
             &FrameCapture {
+                assistive: Vec::new(),
                 ts: 1_000,
                 monitor: 0,
                 width: 1920,
@@ -462,6 +463,7 @@ mod tests {
             db.insert_frame(
                 s,
                 &FrameCapture {
+                    assistive: Vec::new(),
                     ts,
                     monitor: 0,
                     width: 1920,
@@ -517,6 +519,7 @@ mod tests {
             db.insert_frame(
                 s,
                 &FrameCapture {
+                    assistive: Vec::new(),
                     ts: 1_000 + i * 1_000,
                     monitor: 0,
                     width: 1920,
@@ -570,6 +573,7 @@ mod tests {
             db.insert_frame(
                 s,
                 &FrameCapture {
+                    assistive: Vec::new(),
                     ts: 1_000 + i * 1_000,
                     monitor: 0,
                     width: 1920,
@@ -835,6 +839,7 @@ mod tests {
             db.insert_frame(
                 s,
                 &FrameCapture {
+                    assistive: Vec::new(),
                     ts,
                     monitor: 0,
                     width: 1920,

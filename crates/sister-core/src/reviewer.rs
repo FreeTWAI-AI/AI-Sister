@@ -2241,6 +2241,7 @@ mod tests {
         )
         .expect("focus b");
         let frame = FrameCapture {
+            assistive: Vec::new(),
             ts: ts + 30_000,
             monitor: 0,
             width: 100,
@@ -4122,6 +4123,7 @@ mod tests {
         )
         .expect("focus");
         let frame = FrameCapture {
+            assistive: Vec::new(),
             ts: ts + 1_000,
             monitor: 0,
             width: 100,
@@ -4219,6 +4221,7 @@ mod tests {
             .expect("focus");
         }
         let frame = FrameCapture {
+            assistive: Vec::new(),
             ts: ts + 30_000,
             monitor: 0,
             width: 100,
@@ -4486,6 +4489,7 @@ mod tests {
             .expect("focus");
         }
         let frame = FrameCapture {
+            assistive: Vec::new(),
             ts: ts + 12 * min,
             monitor: 0,
             width: 100,
@@ -4632,6 +4636,7 @@ mod tests {
             .expect("focus");
         }
         let frame = FrameCapture {
+            assistive: Vec::new(),
             ts: ts + 16 * min,
             monitor: 0,
             width: 100,
@@ -5139,6 +5144,7 @@ mod tests {
             .expect("focus");
         }
         let frame = FrameCapture {
+            assistive: Vec::new(),
             ts: ts + 16 * min,
             monitor: 0,
             width: 100,

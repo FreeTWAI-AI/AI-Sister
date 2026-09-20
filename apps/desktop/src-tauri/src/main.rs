@@ -2479,6 +2479,7 @@ mod memory_overview_tests {
         image_path: Option<&str>,
     ) -> i64 {
         let frame = FrameCapture {
+            assistive: Vec::new(),
             ts,
             monitor: 0,
             width: 1920,

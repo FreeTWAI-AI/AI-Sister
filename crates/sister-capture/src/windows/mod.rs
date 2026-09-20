@@ -13,6 +13,7 @@ pub mod input;
 pub mod ocr;
 pub mod screen;
 pub mod system;
+mod text;
 pub mod uia;
 
 use anyhow::Result;
@@ -119,8 +120,8 @@ impl Capabilities {
         if config.capture.ocr {
             match self.ocr {
                 CapabilityState::Unavailable => out.push(
-                    "這台機器沒有任何 OCR 語言：畫面會被記下來，但上面的字\
-                     一個都不會進資料庫，搜尋永遠是空的"
+                    "這台機器沒有任何 OCR 語言：畫面仍可記下；\
+                     只有輔助介面讀得到的文字能進入搜尋"
                         .into(),
                 ),
                 CapabilityState::Available => {

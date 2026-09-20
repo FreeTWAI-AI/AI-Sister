@@ -30,6 +30,7 @@ use crate::browsers::is_browser;
 
 pub struct WindowsFocus {
     uia: crate::windows::uia::Uia,
+    text_uia: crate::windows::uia::Uia,
     next_generation: u64,
     approved: Option<Approved>,
 }
@@ -52,6 +53,7 @@ impl WindowsFocus {
     pub fn new() -> Self {
         Self {
             uia: crate::windows::uia::Uia::new(),
+            text_uia: crate::windows::uia::Uia::new(),
             next_generation: 0,
             approved: None,
         }
@@ -137,6 +139,22 @@ impl FocusSource for WindowsFocus {
             return Ok(false);
         };
         Ok(now_window == native_window && now_pid == process_id && now_context == approved.context)
+    }
+
+    fn assistive_text(&mut self, permit: CapturePermit) -> Vec<sister_core::model::AssistiveBlock> {
+        if !self.is_current(permit).unwrap_or(false) {
+            return Vec::new();
+        }
+        let Some((native_window, pid, _)) = permit.windows_parts() else {
+            return Vec::new();
+        };
+        let blocks = self
+            .text_uia
+            .visible_text(HWND(native_window as usize as *mut _), pid);
+        if !self.is_current(permit).unwrap_or(false) {
+            return Vec::new();
+        }
+        blocks
     }
 
     fn url_capture(&self) -> sister_core::capabilities::UrlCapture {

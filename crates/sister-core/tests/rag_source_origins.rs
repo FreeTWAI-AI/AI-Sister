@@ -9,7 +9,7 @@ use sister_core::replay::{
 use sister_core::retrieval::RetrievalProfile;
 
 #[test]
-fn rag_preserves_each_recorded_origin_and_only_the_ocr_frames_own_reference() {
+fn rag_preserves_recorded_origins_and_their_own_frame_reference() {
     let clipboard = "phone evidence 0912-345-678";
     let corpus = Corpus {
         format_version: FORMAT_VERSION,
@@ -19,6 +19,11 @@ fn rag_preserves_each_recorded_origin_and_only_the_ocr_frames_own_reference() {
         redactions: RedactionSummary::default(),
         events: vec![
             Event::Frame {
+                assistive: vec![sister_core::model::AssistiveBlock {
+                    text: "phone evidence 0800-080-123".into(),
+                    role: "edit".into(),
+                    bbox: None,
+                }],
                 at_ms: 10,
                 monitor: 0,
                 width: 800,
@@ -63,8 +68,16 @@ fn rag_preserves_each_recorded_origin_and_only_the_ocr_frames_own_reference() {
     let got = RetrievalProfile::TextAndFacts
         .retrieve(&mut db, "phone", 10)
         .expect("retrieval");
-    assert_eq!(got.hits.len(), 4, "OCR, clipboard, title and URL");
+    assert_eq!(
+        got.hits.len(),
+        5,
+        "OCR, assistive, clipboard, title and URL"
+    );
     assert_eq!(got.answers.len(), 3, "three different phone facts");
+    assert!(
+        got.answers.iter().all(|answer| answer.sightings == 1),
+        "OCR and UIA on one frame must not double the sightings"
+    );
     let frame_id = got
         .hits
         .iter()
@@ -77,7 +90,7 @@ fn rag_preserves_each_recorded_origin_and_only_the_ocr_frames_own_reference() {
     let rag = grounded_answer::prepare("phone", &[], &got.answers, &got.hits, 2_000)
         .unwrap()
         .unwrap();
-    assert_eq!(rag.sources.len(), 7);
+    assert_eq!(rag.sources.len(), 8);
     let prompt_rows: Vec<serde_json::Value> = rag
         .payload
         .lines()
@@ -102,7 +115,7 @@ fn rag_preserves_each_recorded_origin_and_only_the_ocr_frames_own_reference() {
             }
             SourceRef::Card(_) => panic!("fixture contains no interpretations"),
         };
-        let expected_frame = (origin == "ocr").then_some(frame_id);
+        let expected_frame = matches!(origin, "ocr" | "assistive").then_some(frame_id);
         assert_eq!(original_frame, expected_frame);
         assert_eq!(
             source.frame_id,

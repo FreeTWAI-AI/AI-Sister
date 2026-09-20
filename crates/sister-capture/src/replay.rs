@@ -80,6 +80,23 @@ impl ReplaySystemState {
     }
 }
 
+/// 腳本上的一個輔助介面節點。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AssistiveNode {
+    pub text: String,
+    /// 腳本明確提供的角色；省略代表不知道。
+    #[serde(default = "default_assistive_role")]
+    pub role: String,
+    /// 螢幕座標 `[x, y, w, h]`。省略＝這個節點報不出位置，落地就是 NULL。
+    #[serde(default)]
+    pub bbox: Option<[i32; 4]>,
+}
+
+fn default_assistive_role() -> String {
+    "unknown".to_string()
+}
+
 /// 時間軸上的一步。缺省的欄位代表「這一刻這個感官沒有新東西」。
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -92,6 +109,8 @@ pub struct Step {
     pub url: Option<String>,
     /// 螢幕上的文字。同時擔任 OCR 的輸出。
     pub text: Vec<String>,
+    /// 輔助介面回報的節點，與 OCR 的 `text` 各自提供，避免測試自動捏造一致。
+    pub assistive: Vec<AssistiveNode>,
     /// 明確指定 dhash。省略時由 `text` 推導，因此「同樣的文字 = 同一個畫面」，
     /// 去重邏輯不需要真的像素就能被測到。
     pub dhash: Option<u64>,
@@ -566,6 +585,23 @@ impl Backend for ReplayBackend {
         self.input_since = ts;
         self.input_enabled = true;
         Ok(())
+    }
+
+    fn assistive_text(&mut self, permit: CapturePermit) -> Vec<sister_core::model::AssistiveBlock> {
+        if permit != self.current_permit() {
+            return Vec::new();
+        }
+        self.current
+            .assistive
+            .iter()
+            .map(|node| sister_core::model::AssistiveBlock {
+                text: node.text.clone(),
+                role: node.role.clone(),
+                bbox: node
+                    .bbox
+                    .map(|[x, y, w, h]| sister_core::model::BlockBox { x, y, w, h }),
+            })
+            .collect()
     }
 
     fn recognize(&mut self, frame: &RawFrame) -> crate::traits::OcrAttempt {

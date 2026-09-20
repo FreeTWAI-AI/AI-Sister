@@ -1,4 +1,5 @@
-//! 瀏覽器網址與密碼欄：UI Automation。
+//! UI Automation 工作執行緒：隱私探測與可見文字請求。
+//! WindowsFocus 使用分開的實例；隱私探測本身不收集編輯區文字。
 //!
 //! 這個模組補上 `sister doctor` 一直在喊的那個洞：**沒有它，
 //! `excluded_urls` 整組規則一條都不會生效**，網銀與登入頁只能靠視窗標題擋。
@@ -125,7 +126,17 @@ pub struct Uia {
     unknown_streak: u32,
 }
 
-struct Job {
+enum Job {
+    Privacy(PrivacyJob),
+    Text {
+        hwnd: isize,
+        pid: u32,
+        window: crate::assistive::ReadWindow,
+        reply: SyncSender<Vec<sister_core::model::AssistiveBlock>>,
+    },
+}
+
+struct PrivacyJob {
     hwnd: isize,
     /// 是否為瀏覽器。密碼欄每次都問；瀏覽器每拍重讀位址列 Value。
     browser: bool,
@@ -245,6 +256,45 @@ impl Uia {
             .unwrap_or(false)
     }
 
+    /// Content requests use a separate Uia instance, never the privacy probe.
+    /// Timed-out work cannot publish or start another text read after its deadline.
+    pub(super) fn visible_text(
+        &mut self,
+        hwnd: HWND,
+        pid: u32,
+    ) -> Vec<sister_core::model::AssistiveBlock> {
+        if self.surrendered {
+            return Vec::new();
+        }
+        let window = crate::assistive::ReadWindow::new();
+        let (tx, rx) = sync_channel(1);
+        let job = Job::Text {
+            hwnd: hwnd.0 as isize,
+            pid,
+            window: window.clone(),
+            reply: tx,
+        };
+        if self
+            .worker
+            .get_or_insert_with(spawn_worker)
+            .send(job)
+            .is_err()
+        {
+            self.worker = None;
+            self.surrendered = true;
+            return Vec::new();
+        }
+        let result = rx.recv_timeout(crate::assistive::READ_BUDGET);
+        window.cancel();
+        match result {
+            Ok(blocks) => blocks,
+            Err(_) => {
+                self.note_abandoned_thread();
+                Vec::new()
+            }
+        }
+    }
+
     /// 問一個前景視窗：它的網址是什麼、焦點是不是在密碼欄上。
     ///
     /// 回 `None` 代表 UIA 在這台機器上不能用（或已經投降）。呼叫端會
@@ -258,11 +308,11 @@ impl Uia {
         }
 
         let (tx, rx) = sync_channel(1);
-        let job = Job {
+        let job = Job::Privacy(PrivacyJob {
             hwnd: hwnd.0 as isize,
             browser,
             reply: tx,
-        };
+        });
 
         let worker = self.worker.get_or_insert_with(spawn_worker);
         if worker.send(job).is_err() {
@@ -309,14 +359,26 @@ fn worker_main(rx: Receiver<Job>) {
         // 位址列編輯都可能在 HWND 不變時改 URL；Value 每一拍都重讀。
         let mut cached_address: Option<(isize, IUIAutomationElement)> = None;
         while let Ok(job) = rx.recv() {
-            let reading = probe(
-                &automation,
-                HWND(job.hwnd as *mut _),
-                job.browser,
-                &mut cached_address,
-            );
-            // 客戶端可能已經放棄我們了（容量 1 的 channel 不會阻塞）
-            let _ = job.reply.send(reading);
+            match job {
+                Job::Privacy(job) => {
+                    let reading = probe(
+                        &automation,
+                        HWND(job.hwnd as *mut _),
+                        job.browser,
+                        &mut cached_address,
+                    );
+                    let _ = job.reply.send(reading);
+                }
+                Job::Text {
+                    hwnd,
+                    pid,
+                    window,
+                    reply,
+                } => {
+                    let blocks = super::text::read(&automation, HWND(hwnd as *mut _), pid, &window);
+                    let _ = reply.send(blocks);
+                }
+            }
         }
     }
 
@@ -383,7 +445,7 @@ fn focused_is_password(automation: &IUIAutomation, root: &IUIAutomationElement) 
 
 /// `element` 是 `root` 本身或 descendant 才回 Some。走不到 root、COM
 /// 問不出來都回 None；呼叫端會把敏感欄狀態當 Unknown。
-fn belongs_to_root(
+pub(super) fn belongs_to_root(
     automation: &IUIAutomation,
     element: &IUIAutomationElement,
     root: &IUIAutomationElement,

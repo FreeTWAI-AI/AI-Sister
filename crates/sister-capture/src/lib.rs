@@ -7,6 +7,8 @@
 //! [`replay`] 讓整條錄製迴圈能在沒有螢幕的機器上被完整測試，
 //! 也是 SPEC §12 replay 評測的地基。
 
+#[cfg(any(windows, test))]
+mod assistive;
 mod backend_identity;
 pub mod browsers;
 pub mod footprint;

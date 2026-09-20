@@ -1339,6 +1339,7 @@ mod tests {
 
     fn frame(ts: Millis, text: &str) -> FrameCapture {
         FrameCapture {
+            assistive: Vec::new(),
             ts,
             monitor: 0,
             width: 1920,

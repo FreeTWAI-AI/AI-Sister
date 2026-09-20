@@ -94,6 +94,7 @@ fn frame(ts: i64, i: usize) -> FrameCapture {
     }
 
     FrameCapture {
+        assistive: Vec::new(),
         ts,
         monitor: 0,
         width: 2560,

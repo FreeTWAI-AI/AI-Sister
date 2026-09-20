@@ -403,6 +403,7 @@ pub struct Recorder<B: Backend> {
     session_id: i64,
     /// 最後一張被保留的幀，重複時往它身上加計數。
     last_frame_id: Option<i64>,
+    last_assistive: Vec<sister_core::model::AssistiveBlock>,
     last_focus: Option<FocusSnapshot>,
     /// 目前這個視窗拿到焦點之後過了幾拍，以及其中幾拍標題變了。
     ///
@@ -564,6 +565,7 @@ impl<B: Backend> Recorder<B> {
             deduper,
             session_id,
             last_frame_id: None,
+            last_assistive: Vec::new(),
             last_focus: None,
             focus_ticks: 0,
             title_changes: 0,
@@ -921,6 +923,7 @@ impl<B: Backend> Recorder<B> {
     fn seal_system_gap(&mut self, ts: Millis) {
         self.deduper.reset();
         self.last_frame_id = None;
+        self.last_assistive.clear();
         self.backend.reset_ocr();
         self.system_clipboard_gap = true;
         self.system_input_gap = true;
@@ -936,6 +939,7 @@ impl<B: Backend> Recorder<B> {
     fn seal_privacy_gap(&mut self, ts: Millis) {
         self.deduper.reset();
         self.last_frame_id = None;
+        self.last_assistive.clear();
         self.backend.reset_ocr();
         let _ = self.establish_clipboard_watermark(ts);
         self.exclusion_clipboard_gap = true;
@@ -946,6 +950,7 @@ impl<B: Backend> Recorder<B> {
     fn seal_pause_gap(&mut self, ts: Millis) {
         self.deduper.reset();
         self.last_frame_id = None;
+        self.last_assistive.clear();
         self.backend.reset_ocr();
         self.pause_clipboard_gap = true;
         self.pause_input_gap = true;
@@ -956,6 +961,7 @@ impl<B: Backend> Recorder<B> {
     fn seal_master_stop_gap(&mut self, ts: Millis) {
         self.deduper.reset();
         self.last_frame_id = None;
+        self.last_assistive.clear();
         self.backend.reset_ocr();
         self.master_clipboard_gap = true;
         self.master_input_gap = true;
@@ -1548,6 +1554,7 @@ impl<B: Backend> Recorder<B> {
             // 更不准把這裡複製的剪貼簿留給下一個未排除 tick 去讀。
             self.deduper.reset();
             self.last_frame_id = None;
+            self.last_assistive.clear();
             self.backend.reset_ocr();
             let _ = self.establish_clipboard_watermark(ts);
             self.exclusion_clipboard_gap = true;
@@ -1838,7 +1845,30 @@ impl<B: Backend> Recorder<B> {
         }
         self.stats.last_frame_size = Some((frame.width, frame.height));
 
-        match self.deduper.check(frame.dhash) {
+        // UIA 讀的是即時前景，放在慢 OCR 前，並沿用剛才核准的 permit。
+        let assistive = if self.config.capture.assistive {
+            self.backend.assistive_text(permit)
+        } else {
+            Vec::new()
+        };
+        if let Some(tick) = self.master_postcheck(ts, &master_activity)? {
+            return Ok(tick);
+        }
+        if let Some(boundary) = pause_boundary_tick(self.observe_pause_request(pause_probe)?) {
+            return Ok(boundary);
+        }
+        if !self.backend.capture_permit_is_current(permit)? {
+            self.seal_privacy_gap(ts);
+            self.stats.context_changed += 1;
+            return Ok(Tick::ContextChanged);
+        }
+
+        let verdict = if !assistive.is_empty() && assistive != self.last_assistive {
+            FrameVerdict::New
+        } else {
+            self.deduper.check(frame.dhash)
+        };
+        match verdict {
             FrameVerdict::Duplicate { run } => {
                 if self.config.capture.ocr {
                     match self.backend.recheck_ocr_dhash_duplicate(&frame) {
@@ -1846,7 +1876,7 @@ impl<B: Backend> Recorder<B> {
                             return self.keep_frame(
                                 ts,
                                 frame,
-                                focus,
+                                (focus, assistive),
                                 Some(attempt),
                                 pause_probe,
                                 &master_activity,
@@ -1902,9 +1932,14 @@ impl<B: Backend> Recorder<B> {
                 drop(master_commit_guard);
                 Ok(Tick::Duplicate { run })
             }
-            FrameVerdict::New => {
-                self.keep_frame(ts, frame, focus, None, pause_probe, &master_activity)
-            }
+            FrameVerdict::New => self.keep_frame(
+                ts,
+                frame,
+                (focus, assistive),
+                None,
+                pause_probe,
+                &master_activity,
+            ),
         }
     }
 
@@ -1937,11 +1972,12 @@ impl<B: Backend> Recorder<B> {
         &mut self,
         ts: Millis,
         frame: RawFrame,
-        focus: FocusSnapshot,
+        context: (FocusSnapshot, Vec<sister_core::model::AssistiveBlock>),
         prepared_ocr: Option<OcrAttempt>,
         pause_probe: &mut dyn FnMut() -> PauseSignal,
         master_activity: &MasterActivity,
     ) -> Result<Tick> {
+        let (focus, assistive) = context;
         let (ocr, ocr_committable) = if self.config.capture.ocr {
             // OCR 失敗不擋錄製，但要留下計數——見 `RecorderStats::ocr_failures`
             let attempt = prepared_ocr.unwrap_or_else(|| self.backend.recognize(&frame));
@@ -2027,6 +2063,7 @@ impl<B: Backend> Recorder<B> {
             image: None,
             image_ext: "png",
             ocr,
+            assistive,
             focus,
         };
 
@@ -2070,6 +2107,7 @@ impl<B: Backend> Recorder<B> {
             .saturating_add(capture.ocr.len() as u64);
         self.deduper.kept(frame.dhash);
         self.last_frame_id = Some(frame_id);
+        self.last_assistive = capture.assistive;
         self.stats.kept += 1;
         Ok(Tick::Kept {
             frame_id,

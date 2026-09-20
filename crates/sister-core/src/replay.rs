@@ -130,6 +130,8 @@ pub enum Event {
         dup_run: u32,
         focus: ReplayFocus,
         ocr: Vec<OcrBlock>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        assistive: Vec<crate::model::AssistiveBlock>,
     },
     Focus {
         at_ms: Millis,
@@ -286,8 +288,17 @@ impl Corpus {
 
         for event in &mut self.events {
             match event {
-                Event::Frame { focus, ocr, .. } => {
+                Event::Frame {
+                    focus,
+                    ocr,
+                    assistive,
+                    ..
+                } => {
                     scrubber.focus(focus);
+                    for block in assistive {
+                        scrubber.text(&mut block.text);
+                        scrubber.text(&mut block.role);
+                    }
                     for block in ocr {
                         scrubber.text(&mut block.text);
                     }
@@ -515,6 +526,7 @@ mod tests {
                 .iter()
                 .enumerate()
                 .map(|(i, text)| Event::Frame {
+                    assistive: Vec::new(),
                     at_ms: i as i64 * 1_000,
                     monitor: 0,
                     width: 1920,

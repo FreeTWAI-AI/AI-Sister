@@ -6416,6 +6416,7 @@ pub mod act {
             db.insert_frame(
                 session,
                 &FrameCapture {
+                    assistive: Vec::new(),
                     ts: at + 100,
                     monitor: 0,
                     width: 1920,
@@ -15381,6 +15382,7 @@ pub mod query {
 
         fn frame(ts: i64, app: &str, text: &str) -> FrameCapture {
             FrameCapture {
+                assistive: Vec::new(),
                 ts,
                 monitor: 0,
                 width: 1920,
@@ -24713,6 +24715,7 @@ pub mod replay {
             db.insert_frame(
                 session,
                 &FrameCapture {
+                    assistive: Vec::new(),
                     ts,
                     monitor: 0,
                     width: 1920,
@@ -25187,6 +25190,7 @@ pub mod replay {
                 redactions: RedactionSummary::default(),
                 events: vec![
                     Event::Frame {
+                        assistive: Vec::new(),
                         at_ms: 200,
                         monitor: 0,
                         width: 800,
@@ -25208,6 +25212,7 @@ pub mod replay {
                         }],
                     },
                     Event::Frame {
+                        assistive: Vec::new(),
                         at_ms: 1_500,
                         monitor: 0,
                         width: 800,

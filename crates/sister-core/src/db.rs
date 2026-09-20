@@ -35,7 +35,7 @@ use crate::model::{
 };
 
 /// 目前的 schema 版本。每次改結構就 +1 並附一段 migration。
-pub const SCHEMA_VERSION: i32 = 19;
+pub const SCHEMA_VERSION: i32 = 20;
 
 /// 可以替無人值守 URL 背書的 recorder 來源版本。
 ///
@@ -90,6 +90,18 @@ CREATE TABLE IF NOT EXISTS ocr_blocks (
   confidence REAL
 );
 CREATE INDEX IF NOT EXISTS idx_ocr_frame ON ocr_blocks(frame_id);
+
+-- L0：輔助介面（AT-SPI／UIA）直接讀到的文字節點。和 `ocr_blocks` 並排而不是
+-- 混在一起：兩支不同的儀器量同一張畫面，而且 `confidence` 對這一邊沒有意義
+-- （字是應用程式報的，不是猜的）。`role` 是 OCR 沒有的那一欄。
+CREATE TABLE IF NOT EXISTS assistive_blocks (
+  id         INTEGER PRIMARY KEY,
+  frame_id   INTEGER NOT NULL REFERENCES frames(id) ON DELETE CASCADE,
+  text       TEXT NOT NULL,
+  role       TEXT NOT NULL,
+  x INTEGER, y INTEGER, w INTEGER, h INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_assistive_frame ON assistive_blocks(frame_id);
 
 CREATE TABLE IF NOT EXISTS focus_events (
   id           INTEGER PRIMARY KEY,
@@ -693,6 +705,22 @@ CREATE INDEX IF NOT EXISTS idx_input_health_start ON input_health(ts_start);
 DROP TRIGGER IF EXISTS input_health_ever_stored;
 "#;
 
+/// 輔助介面讀到的文字節點。
+///
+/// 這張表和 `ocr_blocks` 一樣掛在 `frames(id) ON DELETE CASCADE` 底下，所以
+/// `prune` / `forget` 刪幀時會連帶刪除；SQLite 備份包含此表，replay 匯出另行讀回節點。`CONTENT_TABLES` 也刻意不收它，理由和 `ocr_blocks`
+/// 不在那張名單上完全一樣（見那裡的註解）。
+const MIGRATION_020: &str = r#"
+CREATE TABLE IF NOT EXISTS assistive_blocks (
+  id         INTEGER PRIMARY KEY,
+  frame_id   INTEGER NOT NULL REFERENCES frames(id) ON DELETE CASCADE,
+  text       TEXT NOT NULL,
+  role       TEXT NOT NULL,
+  x INTEGER, y INTEGER, w INTEGER, h INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_assistive_frame ON assistive_blocks(frame_id);
+"#;
+
 fn add_column_if_missing(
     tx: &rusqlite::Transaction<'_>,
     table: &str,
@@ -1130,6 +1158,7 @@ struct ReplayFrameRow {
     dup_run: u32,
     focus: FocusSnapshot,
     ocr: Vec<crate::model::OcrBlock>,
+    assistive: Vec<crate::model::AssistiveBlock>,
 }
 
 /// 一次 replay import 真正落地的東西。空 corpus 不建立一個假的空 session，
@@ -1377,6 +1406,7 @@ impl Db {
             17 => migrate_017(&tx)?,
             18 => tx.execute_batch(MIGRATION_018)?,
             19 => tx.execute_batch(MIGRATION_019)?,
+            20 => tx.execute_batch(MIGRATION_020)?,
             // ── 加下一段之前，這兩題一定要問 ──────────────────────────
             //
             // 1. **重跑一次會不會安靜地弄壞東西？** 不是「會不會炸」——炸掉是
@@ -1915,6 +1945,59 @@ impl Db {
                     &crate::facts::extract(&joined),
                 )?;
                 chunk_id = Some(id);
+            }
+        }
+
+        if !frame.assistive.is_empty() {
+            {
+                let mut stmt = tx.prepare(
+                    "INSERT INTO assistive_blocks(frame_id, text, role, x, y, w, h)
+                     VALUES(?1,?2,?3,?4,?5,?6,?7)",
+                )?;
+                for b in &frame.assistive {
+                    // `bbox` 是 `Option`，四個欄位就一起是 NULL。拆成
+                    // `unwrap_or(0)` 的那一版，會把「輔助介面答不出位置」
+                    // 和「這塊字真的在左上角」寫成同一列。
+                    let (x, y, w, h) = match b.bbox {
+                        Some(bb) => (Some(bb.x), Some(bb.y), Some(bb.w), Some(bb.h)),
+                        None => (None, None, None, None),
+                    };
+                    stmt.execute(params![frame_id, b.text, b.role, x, y, w, h])?;
+                }
+            }
+
+            // 和 OCR 那一半同樣是「一幀一個 chunk」，但**是另一個 chunk**：
+            // 併成一個的話，檢索命中之後就分不出這句話是哪一支儀器讀到的，
+            // 而出處那一排正要靠這件事說話。
+            let joined = frame
+                .assistive
+                .iter()
+                .map(|b| b.text.as_str())
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            if !joined.trim().is_empty() {
+                let id = insert_chunk_tx(
+                    &tx,
+                    session_id,
+                    frame.ts,
+                    SourceKind::Assistive,
+                    Some(frame_id),
+                    Some(frame_id),
+                    &frame.focus,
+                    &joined,
+                )?;
+                chunk_id.get_or_insert(id);
+                fact_count += insert_facts_tx(
+                    &tx,
+                    session_id,
+                    frame.ts,
+                    id,
+                    Some(frame_id),
+                    SourceKind::Assistive,
+                    &frame.focus,
+                    &crate::facts::extract(&joined),
+                )?;
             }
         }
 
@@ -6192,6 +6275,7 @@ impl Db {
                     url: frame.focus.url,
                 },
                 ocr: frame.ocr,
+                assistive: frame.assistive,
             });
         }
 
@@ -6364,9 +6448,11 @@ impl Db {
                     dup_run,
                     focus,
                     ocr,
+                    assistive,
                 } => {
                     let ts = origin + *at_ms;
                     let frame = FrameCapture {
+                        assistive: assistive.clone(),
                         ts,
                         monitor: *monitor,
                         width: *width,
@@ -6490,6 +6576,27 @@ impl Db {
         })
     }
 
+    pub fn assistive_blocks(&self, frame_id: i64) -> Result<Vec<crate::model::AssistiveBlock>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT text, role, x, y, w, h FROM assistive_blocks WHERE frame_id=?1 ORDER BY id",
+        )?;
+        Ok(stmt
+            .query_map([frame_id], |row| {
+                let bbox = match (row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?) {
+                    (Some(x), Some(y), Some(w), Some(h)) => {
+                        Some(crate::model::BlockBox { x, y, w, h })
+                    }
+                    _ => None,
+                };
+                Ok(crate::model::AssistiveBlock {
+                    text: row.get(0)?,
+                    role: row.get(1)?,
+                    bbox,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
     fn replay_frame_rows(&self, from: Millis, to: Millis) -> Result<Vec<ReplayFrameRow>> {
         let mut statement = self.conn.prepare(
             "SELECT f.id, f.ts, f.monitor, f.width, f.height, f.dhash, f.dup_run,
@@ -6526,6 +6633,7 @@ impl Db {
                         pid: None,
                     },
                     ocr: Vec::new(),
+                    assistive: self.assistive_blocks(frame_id)?,
                 });
                 current_id = Some(frame_id);
             }
@@ -9841,6 +9949,7 @@ mod tests {
 
     fn frame_with_text(ts: Millis, app: &str, title: &str, lines: &[&str]) -> FrameCapture {
         FrameCapture {
+            assistive: Vec::new(),
             ts,
             monitor: 0,
             width: 1920,
@@ -10271,6 +10380,7 @@ mod tests {
                     db.insert_frame(
                         sid,
                         &FrameCapture {
+                            assistive: Vec::new(),
                             ts: core,
                             monitor: 0,
                             width: 100,
@@ -10890,6 +11000,7 @@ mod tests {
         db.insert_frame(
             s,
             &FrameCapture {
+                assistive: Vec::new(),
                 ts: 30_000,
                 monitor: 0,
                 width: 100,
@@ -10935,6 +11046,7 @@ mod tests {
             .insert_frame(
                 s,
                 &FrameCapture {
+                    assistive: Vec::new(),
                     ts: 30_000,
                     monitor: 0,
                     width: 100,
@@ -11128,26 +11240,15 @@ mod tests {
     /// 東西砍掉**，再蓋回上一版的版號，也就是一顆真的上一版檔案。
     #[test]
     fn a_database_from_the_previous_release_gets_this_versions_new_tables() {
-        // **這條測試會隨著版號自己爛掉，所以先在這裡擋一下。** 底下那個「上一
-        // 版的 schema」是寫死的（砍掉 019 加的那兩樣）。等 `MIGRATION_020` 進
-        // 來，同一段程式碼就不再是「一顆真的上一版檔案」，而是隔壁那條已經在
-        // 測的「結構新、版號舊」——而且它會**綠**。所以下一個動版號的人必須先
-        // 回答這裡：把 DROP 那幾句換成 `SCHEMA_VERSION - 1` 那一版的差集。
-        assert_eq!(
-            SCHEMA_VERSION, 19,
-            "版號動了：把下面那段『上一版的 schema』換成新的差集，再改這個數字"
-        );
+        // Schema 19 -> 20 adds assistive_blocks and its frame index.
+        assert_eq!(SCHEMA_VERSION, 20, "更新上一版 schema 的差集");
         let dir = migrate_tmp("upgrade");
         let path = dir.join("previous-release.db");
         {
             let db = Db::open(&path).expect("build a current one");
-            // 這兩行就是「上一版的 schema」：v0.1.0-alpha.97 和這一版之間，
-            // 整份 DDL 的差集**只有**這張表和它的索引（`git diff` 對過）。
+            // DROP TABLE also removes its index.
             db.conn
-                .execute_batch(
-                    "DROP INDEX IF EXISTS idx_input_health_start;
-                     DROP TABLE IF EXISTS input_health;",
-                )
+                .execute_batch("DROP TABLE assistive_blocks;")
                 .expect("退回上一版的結構");
             db.conn
                 .pragma_update(None, "user_version", SCHEMA_VERSION - 1)
@@ -11160,11 +11261,19 @@ mod tests {
         // 斷言「寫得進去、讀得回來」，不是「`sqlite_master` 裡有這個名字」——
         // 少一個索引或少一個欄位，後者照樣是綠的，而下游炸的是這兩步。
         let sid = db.start_session("test", "0").expect("session");
-        db.insert_input_health(sid, 1, 2, crate::model::InputListening::IdleConfirmed)
-            .expect("升級上來的資料庫寫不進 input_health");
+        let mut frame = frame_with_text(1, "notes.exe", "upgrade", &[]);
+        frame.assistive = vec![crate::model::AssistiveBlock {
+            text: "upgrade phone 0800-123-456".into(),
+            role: "edit".into(),
+            bbox: None,
+        }];
+        let (id, _, _) = db
+            .insert_frame(sid, &frame, None, 0)
+            .expect("insert upgraded assistive text");
+        assert_eq!(db.assistive_blocks(id).unwrap(), frame.assistive);
         assert_eq!(
-            db.input_health_covering(1).expect("read"),
-            Some(crate::model::InputListening::IdleConfirmed),
+            db.search("upgrade", 10).unwrap()[0].source_kind,
+            SourceKind::Assistive
         );
     }
 
@@ -12786,6 +12895,7 @@ mod tests {
             ("meta", "旗標本身，不是內容"),
             ("sessions", "容器，撐得過清空——見 `nothing_recorded_left`"),
             ("ocr_blocks", "frames 長出來的，母體已經在名單上"),
+            ("assistive_blocks", "frames 長出來的，母體已經在名單上"),
             ("facts", "text_chunks 長出來的，母體已經在名單上"),
             ("queries", "他打的字，而且會在清空之後才長出來"),
             ("query_clicks", "同上，掛在 queries 底下"),

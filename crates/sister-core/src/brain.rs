@@ -2875,6 +2875,7 @@ mod tests {
         )
         .expect("focus b");
         let frame = FrameCapture {
+            assistive: Vec::new(),
             ts: ts + 30_000,
             monitor: 0,
             width: 100,
@@ -3066,6 +3067,7 @@ mod tests {
             db.insert_frame(
                 sid,
                 &FrameCapture {
+                    assistive: Vec::new(),
                     ts: ts + offset,
                     monitor: 0,
                     width: 100,

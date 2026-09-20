@@ -176,6 +176,27 @@ pub struct OcrBlock {
     pub confidence: f32,
 }
 
+/// 輔助介面回報的文字。和 OCR 分開保存，不把 provider 的文字當成
+/// OCR confidence=1.0；角色與未知座標也分別保留。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AssistiveBlock {
+    pub text: String,
+    /// 輔助介面報的角色（`heading`、`paragraph`、`label`……）。
+    pub role: String,
+    /// 螢幕座標。輔助介面答不出來的時候是 `None`——**不是 0**。
+    /// 左上角那一塊和「不知道在哪」在畫面上長得一樣，那正是要避免的。
+    pub bbox: Option<BlockBox>,
+}
+
+/// 一塊字在螢幕上的位置。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BlockBox {
+    pub x: i32,
+    pub y: i32,
+    pub w: i32,
+    pub h: i32,
+}
+
 /// 一張被保留下來的畫面。
 ///
 /// 注意 `image`：`None` 代表 text-only 保留模式（第三張同意書關閉時的預設），
@@ -190,6 +211,9 @@ pub struct FrameCapture {
     pub image: Option<Vec<u8>>,
     pub image_ext: &'static str,
     pub ocr: Vec<OcrBlock>,
+    /// 在同一次核准的前景脈絡讀到的可見文字；不是從這張圖的像素辨識。
+    /// 與 OCR 分開，兩者各自引用這張保留幀。
+    pub assistive: Vec<AssistiveBlock>,
     pub focus: FocusSnapshot,
 }
 
@@ -522,6 +546,13 @@ pub enum SourceKind {
     Clipboard,
     WindowTitle,
     Url,
+    /// 輔助介面（AT-SPI／UIA）直接讀到的文字。
+    ///
+    /// **不併進 `Ocr`。** 那樣寫的話，一台沒裝 Tesseract 的機器會一邊在
+    /// `doctor` 上說「問不到本機 Tesseract」，一邊在 `stats` 上報出一堆
+    /// OCR 區塊——同一份報告上兩句互相打臉的話。而且出處那一排會對使用者
+    /// 宣稱「這幾個字是從畫面像素認出來的」，那是假的。
+    Assistive,
 }
 
 impl SourceKind {
@@ -531,6 +562,7 @@ impl SourceKind {
             SourceKind::Clipboard => "clipboard",
             SourceKind::WindowTitle => "window_title",
             SourceKind::Url => "url",
+            SourceKind::Assistive => "assistive",
         }
     }
 
@@ -540,6 +572,7 @@ impl SourceKind {
             "clipboard" => SourceKind::Clipboard,
             "window_title" => SourceKind::WindowTitle,
             "url" => SourceKind::Url,
+            "assistive" => SourceKind::Assistive,
             _ => return None,
         })
     }
@@ -639,6 +672,7 @@ mod tests {
             SourceKind::Clipboard,
             SourceKind::WindowTitle,
             SourceKind::Url,
+            SourceKind::Assistive,
         ] {
             assert_eq!(SourceKind::from_str_kind(k.as_str()), Some(k));
         }
