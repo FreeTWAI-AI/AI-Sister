@@ -17,7 +17,10 @@ public static class SisterEdgeWindow {
 }
 '@
 $browser = $null
+$backdrop = $null
+. (Join-Path $PSScriptRoot 'uia-backdrop.ps1')
 try {
+    $backdrop = New-SisterUiaBackdrop
     $edge = @("${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe", "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
     if (-not $edge) { throw 'Microsoft Edge is not installed on the native runner' }
     $html = @'
@@ -84,6 +87,7 @@ window.addEventListener('keydown', event => {
     $sent = ''
     $activated = [DateTime]::MinValue
     while ([DateTime]::UtcNow -lt $deadline) {
+        [System.Windows.Forms.Application]::DoEvents()
         $browser.Refresh()
         if ($browser.HasExited) { throw 'Owned Edge process exited before the test completed' }
         $request = Join-Path $StateDir 'request'
@@ -183,6 +187,7 @@ window.addEventListener('keydown', event => {
 } catch {
     [IO.File]::WriteAllText((Join-Path $StateDir 'error'), $_.Exception.ToString())
 } finally {
+    if ($backdrop) { $backdrop.Dispose() }
     if ($browser) {
         # Unique --user-data-dir means this PID/tree never belongs to a user's Edge session.
         & taskkill.exe /PID $browser.Id /T /F 2>&1 | Out-Null

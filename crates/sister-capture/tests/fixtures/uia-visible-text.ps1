@@ -2,6 +2,8 @@
 param([Parameter(Mandatory=$true)][string]$StateDir)
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName PresentationFramework
+. (Join-Path $PSScriptRoot 'uia-backdrop.ps1')
+$backdrop = New-SisterUiaBackdrop
 
 $window = New-Object System.Windows.Window
 $window.Title = 'AI-Sister UIA native fixture'
@@ -113,4 +115,4 @@ $timer.Add_Tick({
 })
 $window.Add_Closed({ $timer.Stop(); $other.Close() })
 $timer.Start()
-$window.ShowDialog() | Out-Null
+try { $window.ShowDialog() | Out-Null } finally { $backdrop.Dispose() }
