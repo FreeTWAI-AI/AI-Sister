@@ -1,6 +1,6 @@
 # HANDOFF — 交給下一位 agent（Codex）
 
-**更新於 2026-09-20（Codex 續接）；alpha.145 收斂出貨，前一公開版是 alpha.144 `258a755`。** Claude 的原始交接保留在本機的
+**更新於 2026-09-20（Codex 續接）；alpha.145 已公開，release commit 是 `9ed66e5`。** Claude 的原始交接保留在本機的
 `HANDOFF-CODEX-SEAT-2026-09-19.md`，已加入本機 Git exclude，不進公開提交。
 這份是「打開就能接著做」的交接紀錄，不是
 路線圖。路線圖在 `docs/PHASES.md`，規格在 `docs/SPEC.md`，產品定義在
@@ -84,14 +84,15 @@
 | | |
 |---|---|
 | 這一段的執行者 | 原主段是 Claude Code（Opus 5, 1M context），session `e74b7a6f-34e8-4500-925c-8e0d020ac13c`；alpha.142／143 由 Codex 續接；2026-09-15～16 的 15 個 commit 由 Claude Code session `5c0ee346` 做 |
-| 時間範圍 | 2026-09-09T05:04:30Z → 2026-09-20（UTC；包含 Codex 續接與 alpha.144 發布） |
-| **已公開的最後一版** | **`v0.1.0-alpha.144` → `258a755`**，published 2026-09-20T05:23:31Z |
+| 時間範圍 | 2026-09-09T05:04:30Z → 2026-09-20（UTC；包含 Codex 續接與 alpha.145 發布） |
+| **已公開的最後一版** | **`v0.1.0-alpha.145` → `9ed66e5`**，published 2026-09-20T19:53:14Z |
 | **2026-09-19 接手點** | **`e5645c7`，當時 ahead `origin/main` 16 個 commit，未 push、未 tag**；下述 Codex 續接另有測試與交接修正 |
 | 目前產品版號 | `0.1.0-alpha.145`（17 個位置一致）；本版收斂 OCR／UIA 取證、日期搜尋、來源分類與同意鎖修正 |
+| alpha.145 CI | tag run `35530957137` 第一次就八個 job（含 Release／Website）全部成功；main 的測試焦點修正另見下方收據 |
 | alpha.144 CI | main run `35487928806` 六個平台 job 全部成功；tag run `35489365726` 八個 job（含 Release／Website）全部成功，兩輪都沒有重跑 |
 | alpha.143 CI | tag run `34959625002` 第一次就八個 job 全部 `success`；Release 四個 artifact 齊全 |
 | alpha.142 CI | tag run `34932696475` attempt 2 八個 job 全部 `success` |
-| 本機閘門 | Claude 收據：`e5645c7` 已追蹤內容的 gates-all.sh **52 通過／0 失敗**；Codex 續接驗證範圍見下，不冒充重新跑完 52 條 |
+| 本機閘門 | alpha.145 出貨內容（`9ed66e5`）既有 52 條閘門 **52 通過／0 失敗**，包含 workspace 測試、Windows root／desktop 與隱私檢查 |
 | alpha.141 真機 | 正式 Setup 覆蓋成功；舊 persona／同意／Grok／記憶保留，本機出處可點回原截圖 |
 | alpha.141 後續 | 真機 receipt／交接更新；CI 的 GitHub Actions 已升到 Node 24 majors，branch run `34793019345` 六個平台 job 全綠。沒有產品程式碼或新出貨內容 |
 
@@ -105,6 +106,24 @@
   `git cherry main` 全部為 `-`；等價提交是 `2512920`、`0a9c82d`、`7b43b92`，
   並由 `c85e648` 完成、隨 alpha.116 出貨。不需要 rebase 或重寫；分支保留。
 - alpha.144 新增的六項 Windows 人工驗收仍未勾；本機 renderer 不代替真 WebView2。
+
+**alpha.145 發布收據（2026-09-20）：** `9ed66e5` 已 push 並建立 annotated tag；tag run
+`35530957137` 首輪八個 job 全綠，Release 是公開 prerelease。四檔全部 `uploaded`：
+`AI-Sister-Setup.exe` 277,757,610 bytes、`sister-desktop.exe` 71,231,488 bytes、
+`sister.exe` 11,044,864 bytes、`AI-Sister-Linux-X11-amd64.deb` 65,236,916 bytes。
+Release job 下載回四檔、逐位元組核對後才公開。本輪另以匿名公開連結下載 Setup，大小及
+SHA-256 均符合 GitHub API；SHA-256 是
+`7cff03083b84a14844f6437944d9ce55a9911c3f7f1651b30dc15a92915fc4cb`。
+Release body 與本版產生的 release notes 逐字前綴相同，官網 Setup 連結已指向 alpha.145。
+Windows 安裝、重裝、移除、alpha.110 → current 記憶保留與簽章 fixture 都通過。
+原生 PDF／HTML／WPF 取證已驗；OCR 記號仍是 `SISTER-OCR-ZH: SKIPPED lang=en-US zh=none available=en-US`，
+本輪驗到中文 UIA 與英文 OCR，沒有把繁中 OCR 算作通過。
+
+同一 release commit 的 main run `35530957259` 首輪在 PDF fixture 焦點就緒前逾時；原樣重跑
+後 PDF 通過，但 HTML 只看頁面標題就回 ready，原生焦點仍在 Pane，讀字正確回空。
+後續 `4eed7f4` 只修測試：啟用自有文件視窗、等 UIA Document 確實持有焦點才 ready，捲動也
+保留文件焦點；不改出貨程式。新 main run `35532733393` 的三案原生 UIA、Windows 完整測試與
+recorder 接線通過；本機 Windows 編譯／lint 與網路／鍵盤隱私檢查通過。
 
 **alpha.144 發布收據（2026-09-20）：** Ted 已明確授權 push／tag；`258a755` 的 main CI
 通過後才建立 annotated tag。Release 是公開 prerelease，四個檔案全部 `uploaded`：
@@ -231,7 +250,7 @@ CI run `35529804355` 的 WPF／Edge HTML／PDF 原生案例通過；本機 works
 **alpha.145 發版收斂：** 將上述切片收進同一版。main `5f73a06` 的 PDF 原生測試曾因
 runner 背景終端機文字干擾 OCR 而失敗；測試現在自行建立全螢幕空白背景，文件視窗置前，
 不動其他行程的視窗。CI run `35530387269` 的 PDF／Edge HTML／WPF 原生步驟通過。
-正式 tag 仍須完成安裝／升級、四個 release 資產與網站發布；發布結果另補收據。
+正式 tag 的安裝／升級、四個 release 資產與網站發布均已完成，收據見本節上方。
 
 
 ---
