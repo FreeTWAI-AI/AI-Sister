@@ -11,7 +11,7 @@ use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 
 use crate::answer::Answer as FactAnswer;
-use crate::model::{Millis, SearchHit};
+use crate::model::{Millis, SearchHit, SourceKind};
 
 /// 一題最多交給 CLI 的本機候選數。先選判讀與 facts，再用全文命中補足；選完後會按
 /// 時間排序，讓模型真的看得到前後順序。
@@ -42,7 +42,7 @@ pub enum SourceRef {
     /// 她自己稍早想過的那一張（`l2_card`）。
     ///
     /// 和另外兩種的差別不是格式，是**它不是螢幕上的字**：那兩種是當時真的
-    /// 出現在畫面上的東西，這一種是她看著那些東西想出來的結論。畫面上那一
+    /// 記下來的原文，這一種是她看著那些東西想出來的結論。畫面上那一
     /// 排出處也要照這個分——把判讀印成「畫面 #42」，等於宣稱螢幕上寫過這
     /// 句話。
     Card(i64),
@@ -70,17 +70,23 @@ impl SourceRef {
             _ => None,
         }
     }
+}
 
-    /// 這一筆是她想出來的，還是螢幕上真的有的。
-    ///
-    /// 送進 prompt 的 `kind` 欄位就是這個字，畫面上那一排出處的標籤也是照
-    /// 它分的——**同一個判準，一個地方。** 兩邊各寫一次的話，模型收到的
-    /// 「這是我的判讀」和他看到的「畫面 #42」會在某一版分家，而那種錯沒有
-    /// 症狀：句子照樣有出處、出處照樣點得開，只是它說謊。
-    pub fn kind(&self) -> &'static str {
+/// ref 只用來找回紀錄，不能用 fact／chunk 來猜文字是從哪裡讀到的。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceOrigin {
+    Recorded(SourceKind),
+    Reading,
+    /// 舊資料或無法辨認的 fact 來源；不把它升格成 OCR。
+    Unknown,
+}
+
+impl SourceOrigin {
+    pub fn as_str(self) -> &'static str {
         match self {
-            Self::Fact(_) | Self::Chunk(_) => "screen",
-            Self::Card(_) => "reading",
+            Self::Recorded(kind) => kind.as_str(),
+            Self::Reading => "reading",
+            Self::Unknown => "unknown",
         }
     }
 }
@@ -88,6 +94,7 @@ impl SourceRef {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Source {
     pub reference: SourceRef,
+    pub origin: SourceOrigin,
     pub ts: Millis,
     pub text: String,
     pub app: Option<String>,
@@ -109,6 +116,9 @@ impl Source {
         };
         Self {
             reference: SourceRef::Fact(row.id),
+            origin: SourceKind::from_str_kind(&row.source_kind)
+                .map(SourceOrigin::Recorded)
+                .unwrap_or(SourceOrigin::Unknown),
             ts: row.ts,
             text,
             app: row.app_id.clone(),
@@ -121,6 +131,7 @@ impl Source {
     fn from_hit(hit: &SearchHit) -> Self {
         Self {
             reference: SourceRef::Chunk(hit.chunk_id),
+            origin: SourceOrigin::Recorded(hit.source_kind),
             ts: hit.ts,
             text: hit.text.clone(),
             app: hit.app_id.clone(),
@@ -133,6 +144,7 @@ impl Source {
     fn from_reading(reading: &Reading) -> Self {
         Self {
             reference: SourceRef::Card(reading.card_id),
+            origin: SourceOrigin::Reading,
             ts: reading.at,
             text: reading.activity.clone(),
             // 判讀沒有 app／title／url：它不是在哪個視窗上看到的一行字，
@@ -219,8 +231,8 @@ struct PromptQuestion<'a> {
 #[derive(Serialize)]
 struct PromptSource<'a> {
     r#ref: String,
-    /// `"screen"` = 當時螢幕上真的有的字；`"reading"` = 她自己想過的結論。
-    /// 值出自 [`SourceRef::kind`]，和畫面上那排出處的標籤同一個判準。
+    /// 實際讀字來源或她自己的判讀；圖檔是否仍保留是另一個問題。
+    /// 值出自 [`SourceOrigin`]，不是從 ref 的 fact／chunk 前綴推測。
     kind: &'static str,
     at: String,
     text: &'a str,
@@ -488,7 +500,7 @@ pub fn prepare(
         truncated |= source_truncated;
         let line = serde_json::to_string(&PromptSource {
             r#ref: source.reference.as_str(),
-            kind: source.reference.kind(),
+            kind: source.origin.as_str(),
             at: crate::model::stamp(source.ts),
             text: &source.text,
             app: source.app.as_deref(),
@@ -532,22 +544,23 @@ pub fn prepare(
     let header = format!(
         concat!(
             "你是使用者自己的 AI 夥伴，正在幫他回想他自己那台電腦上發生過的事。\n",
-            "問這一題的人就是這些畫面的主人：講到他做的事一律用「你」，講到自己看到的用「我」。\n",
+            "問這一題的人就是這些紀錄的主人：講到他做的事一律用「你」，講到自己記下的用「我」。\n",
             "像朋友在講話，不要像在描述一個畫面——不要用「畫面上可見」「根據紀錄」「使用者」「有人」這種旁白說法。\n",
             "只根據下面這一題的本機檢索來源回答。\n",
             "只輸出一個 JSON 物件，不要 markdown、不要前後解說。\n",
             "契約：{{\"sentences\":[{{\"text\":\"一句繁體中文答案\",\"sources\":[\"fact:1\",\"chunk:2\"]}}]}}\n",
             "sentences 必須是 1 到 6 句；簡單事實一兩句就停，需要交代一段事情才用更多句。每一項只放一句話、必須有至少一個 sources；sources 只能逐字使用下面列出的 ref。\n",
             "現在是 {now}。每一筆來源都帶 at，那是那件事發生在這台電腦上的時間。\n",
-            "每一筆來源都帶 kind。kind=\"reading\" 是你稍早看著畫面自己想過一輪的可推翻結論，不是螢幕上的字；kind=\"screen\" 才是當時螢幕上真的出現過的文字。\n",
+            "每一筆來源都帶 kind。kind=\"reading\" 是你稍早依紀錄想過一輪的可推翻結論；ocr 是畫面文字辨識，clipboard 是剪貼簿文字，window_title 是視窗標題，url 是記下的網址。其他來源照 kind 理解，unknown 代表來源不明，不可猜成 OCR。\n",
+            "剪貼簿內容不證明當時出現在畫面上；這裡提供的是文字，ocr 來源也不代表目前仍保留截圖檔。\n",
             "回答前先在內部按 at 排出時間線，分清楚：前面在做什麼、哪裡發生轉折、後來看到了什麼、目前能確認到哪裡；不要輸出這個分析過程。\n",
             "**第一句要先講你看懂了什麼，並直接回答問題**：他當時在做的是哪一件事、看起來想弄清楚或解決什麼。有 kind=\"reading\" 就把它當可推翻的判讀來衡量，不要因為它存在就無條件相信。\n",
             "那一句可以把好幾筆收成一句話，不確定就說「看起來」「大概」「我猜」——但不要補來源裡沒有的姓名、數字、完成狀態或原因。\n",
-            "**不要把螢幕上的字照抄當成答案。**「你收到 X，旁邊寫著 Y」是在念紀錄，不是在回答。\n",
+            "**不要把來源原文照抄當成答案。**「你收到 X，旁邊寫著 Y」是在念紀錄，不是在回答。\n",
             "後面的句子要接成同一段解釋，按需要補：事情怎麼開始、做了哪些轉折、卡在哪、後來有沒有完成證據。不要把互不相干的來源各寫成一條片段。\n",
             "時間相鄰只證明先後，不自動證明因果。只有來源真的支持原因時才用「因為／所以」；否則說「接著／之後／同一段時間」。\n",
             "句子指到某一刻就把時刻講進句子裡（「你早上 10:14 要求…」「你昨天下午在…」）；at 以外的時間一個字都不要編。\n",
-            "畫面上如果是別人說的話或別人寫的東西，就講清楚那是誰的，不要算到「你」頭上。\n",
+            "來源中如果是別人說的話或別人寫的東西，就講清楚那是誰的，不要算到「你」頭上。\n",
             "資料不足就只說來源能支持的範圍。\n\n",
         ),
         now = crate::model::stamp(now),
@@ -809,14 +822,28 @@ mod tests {
         assert!(
             prepared
                 .payload
-                .contains(r#""ref":"chunk:31","kind":"screen""#),
-            "螢幕上的字要標成 screen：{}",
+                .contains(r#""ref":"chunk:31","kind":"ocr""#),
+            "OCR 讀到的字要標成 ocr：{}",
             prepared.payload
         );
         assert!(
             prepared.payload.contains("你在追一個天氣警報"),
             "她想的那句話本身要送進去，不然模型只拿到一個編號"
         );
+    }
+
+    #[test]
+    fn an_unknown_fact_origin_is_not_guessed_from_its_frame_reference() {
+        let mut unknown = fact();
+        unknown.latest.source_kind = "future_capture".into();
+        let prepared = prepare("電話", &[], &[unknown], &[], NOW).unwrap().unwrap();
+        assert!(
+            prepared
+                .payload
+                .contains(r#""ref":"fact:9","kind":"unknown""#)
+        );
+        assert!(!prepared.payload.contains("future_capture"));
+        assert_eq!(prepared.sources[0].frame_id, Some(42));
     }
 
     /// 她這一段還沒想過，答題照樣走得下去。
@@ -853,7 +880,7 @@ mod tests {
             "少了這一句，她會回去一行一行念螢幕上的字"
         );
         assert!(
-            payload.contains("不要把螢幕上的字照抄當成答案"),
+            payload.contains("不要把來源原文照抄當成答案"),
             "光叫她「先講你看懂了什麼」不夠——照抄一句再補一句判讀也滿足前者"
         );
         assert!(
@@ -1099,11 +1126,11 @@ mod tests {
             // 講出「畫面上可見有人要求…」。突變測試證實過：只把它換回去，
             // 底下四條全都還在、11 條測試全綠——所以它得自己有一條針。
             "你是使用者自己的 AI 夥伴",
-            "講到他做的事一律用「你」，講到自己看到的用「我」",
+            "講到他做的事一律用「你」，講到自己記下的用「我」",
             "不要用「畫面上可見」「根據紀錄」「使用者」「有人」這種旁白說法",
             "句子指到某一刻就把時刻講進句子裡",
             "at 以外的時間一個字都不要編",
-            "畫面上如果是別人說的話或別人寫的東西，就講清楚那是誰的",
+            "來源中如果是別人說的話或別人寫的東西，就講清楚那是誰的",
         ] {
             assert!(payload.contains(promise), "prompt 少了這一條：{promise}");
         }

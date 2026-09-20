@@ -149,6 +149,14 @@ handle；簽署、撤回與交易失敗都有回歸，子行程仍活著時就�
 還原後 workspace 1,996 通過／0 失敗／3 忽略；fmt、clippy、Windows root／desktop、
 同意書文案／保存、brain outbound、no-network、no-keylogging 通過。
 
+**同日 RAG 來源分類（未發版）：** RAG 不再把所有 fact／chunk 都標成 `screen`；
+依紀錄保留 OCR、剪貼簿、視窗標題與網址的來源，判讀另標 `reading`，無法辨認的 fact
+來源標 `unknown`。提示詞也不再把剪貼簿當成畫面文字，或把 OCR 紀錄當成圖檔仍存在。
+正式 replay 入庫 → 檢索 → RAG 回歸先紅後綠；OCR 文字與事實沿用原始 frame_id，
+沒有畫面編號的來源不借附近的幀。Fixture 只有文字與幀資料，沒有真機擷取或 UIA 驗收。
+workspace 1,998 通過／0 失敗／3 忽略；fmt、clippy、Windows root／desktop、同意書
+文案／保存、brain outbound、no-network、no-keylogging 通過。
+
 ---
 
 ## 2. Spec → 現在：八個 Phase 的完成度
