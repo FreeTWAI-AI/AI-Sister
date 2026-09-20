@@ -71,7 +71,7 @@ macOS 的 capture 仍必須住在簽名 `.app` 主程序樹內以維持 TCC iden
 |---|---|---|---|
 | 螢幕 frame | Windows Phase 0 用 GDI 擷取（OCR／dHash 工作幀長邊上限 4096px，超過才等比縮小），再做 dHash 去重；真的留圖時另依 `max_long_edge`（預設 1568px）縮成 PNG | 每拍做完後預設等待 400ms；無輸入時可跳過擷取，但最久 5s 補看一次 | L0 |
 | OCR 全文 | 平台原生 OCR（見 §15），只跑「保留下來的」幀 | 隨保留幀 | L0 |
-| 輔助可見文字 | Windows UIA 讀取有焦點的 Edit／Document 可見範圍；最多 16 段／8,192 字，900ms 截止；沿用擷取許可與密碼／可見性檢查 | OCR 前讀取；文字改變可保留新幀 | L0；獨立 assistive 來源連回同次幀 |
+| 輔助可見文字 | Windows UIA 讀取有焦點的 Edit／Document 可見範圍；Group 只借直接 Document 父節點並裁回原群組，讀字前後核對文字矩形位於同螢幕／視窗；最多 16 段／8,192 字，900ms 截止；沿用擷取許可與密碼／可見性檢查 | OCR 前讀取；文字改變可保留新幀 | L0；獨立 assistive 來源連回同次幀 |
 | 前景 app / 視窗標題 | Win32 / NSWorkspace；Windows alpha.103 逐拍取 exact HWND／PID 並在內容讀取後重驗 | capture tick | L0 |
 | 瀏覽器 URL | UIA（Win）/ AX（macOS）讀址欄；瀏覽器 URL 或焦點狀態 Unknown 時 fail closed | capture tick／視窗事件 | L0 |
 | 剪貼簿 | Windows sequence polling；>64KB 截斷；秘密與來源 app 排除（見 §11） | capture tick；排除／鎖定空洞只建立水位、不讀內容 | L0 |
