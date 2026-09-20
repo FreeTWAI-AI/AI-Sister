@@ -1,7 +1,6 @@
 # HANDOFF — 交給下一位 agent（Codex）
 
-**更新於 2026-09-20（Codex 續接）；alpha.144 `258a755` 已公開，tag CI 八個 job
-全部成功，四個下載檔案齊全。** Claude 的原始交接保留在本機的
+**更新於 2026-09-20（Codex 續接）；alpha.145 收斂出貨，前一公開版是 alpha.144 `258a755`。** Claude 的原始交接保留在本機的
 `HANDOFF-CODEX-SEAT-2026-09-19.md`，已加入本機 Git exclude，不進公開提交。
 這份是「打開就能接著做」的交接紀錄，不是
 路線圖。路線圖在 `docs/PHASES.md`，規格在 `docs/SPEC.md`，產品定義在
@@ -88,7 +87,7 @@
 | 時間範圍 | 2026-09-09T05:04:30Z → 2026-09-20（UTC；包含 Codex 續接與 alpha.144 發布） |
 | **已公開的最後一版** | **`v0.1.0-alpha.144` → `258a755`**，published 2026-09-20T05:23:31Z |
 | **2026-09-19 接手點** | **`e5645c7`，當時 ahead `origin/main` 16 個 commit，未 push、未 tag**；下述 Codex 續接另有測試與交接修正 |
-| 目前產品版號 | `0.1.0-alpha.144`（17 個位置一致），Release 說明與 `scripts/release-notes.sh` 的預期前綴逐字相同 |
+| 目前產品版號 | `0.1.0-alpha.145`（17 個位置一致）；本版收斂 OCR／UIA 取證、日期搜尋、來源分類與同意鎖修正 |
 | alpha.144 CI | main run `35487928806` 六個平台 job 全部成功；tag run `35489365726` 八個 job（含 Release／Website）全部成功，兩輪都沒有重跑 |
 | alpha.143 CI | tag run `34959625002` 第一次就八個 job 全部 `success`；Release 四個 artifact 齊全 |
 | alpha.142 CI | tag run `34932696475` attempt 2 八個 job 全部 `success` |
@@ -120,7 +119,7 @@ Windows tag job 的 OCR 實測記號是 `SISTER-OCR-ZH: SKIPPED lang=en-US zh=no
 安裝、重裝、移除、alpha.110 → current 記憶保留及簽章 fixture 都通過；六項新增真人 smoke
 仍待 Ted 在正式安裝副本上驗，不補勾。
 
-**2026-09-20 後續切片（未發版）：** 指定日期的 OCR／事實取證已修正。原先「昨天電話」
+**2026-09-20 後續切片（收斂至 alpha.145）：** 指定日期的 OCR／事實取證已修正。原先「昨天電話」
 只讓章節與判讀遵守日期，原文和電話仍從全期間取前幾筆；現在四條文字檢索路徑與事實候選
 都在筆數上限前限制時間，目擊次數與畫面出處也取自同一時間窗。CLI 改寫查詢不能蓋掉
 原問題的日期；指定舊日期的數字搜尋會查完整個指定窗，不再被預設 30 天掃描上限擋掉。
@@ -129,27 +128,27 @@ Windows tag job 的 OCR 實測記號是 `SISTER-OCR-ZH: SKIPPED lang=en-US zh=no
 fmt、clippy、Windows cross-check、同意書文案／保存、brain outbound、no-network、
 no-keylogging、主對話與證據視窗檢查通過。這些不代替真 Windows 的 OCR 或畫面驗收。
 
-**同日下一刀（未發版）：** 英文查詢的事實類型改按完整詞辨認，避免 `hotel`、`profile`、
+**同日下一刀（收斂至 alpha.145）：** 英文查詢的事實類型改按完整詞辨認，避免 `hotel`、`profile`、
 `update` 分別因 `tel`、`file`、`date` 片段帶出不相關電話、檔案與日期。大小寫、複數、
 中英相接及明確的 `telephone` 仍可查；中文詞維持連寫。資料庫 → RAG 回歸先在原程式
 重現，再驗正確文字來源與不相關事實排除；fixture 使用畫面標題，沒有宣稱跑過真 OCR。
 工作區測試 1,994 通過／0 失敗／3 忽略；fmt、clippy、同意書文案／保存、brain outbound、
 no-network 與 no-keylogging 通過。
 
-**同日 macOS 編譯修復（未發版）：** doctor 的前景探測結果與文案分支按實際使用平台
+**同日 macOS 編譯修復（收斂至 alpha.145）：** doctor 的前景探測結果與文案分支按實際使用平台
 編譯，測試保留全部狀態；macOS 維持 `NotAsked`，修正原生 clippy 的 dead-code 失敗。
 Windows root／desktop 編譯與 clippy、host fmt／clippy、同意書文案與 no-network 通過。
 workspace 首輪有一條同意鎖測試在已簽後回 `Busy`；未改程式，該條單跑與整批重跑均過，
 重跑為 1,994 通過／0 失敗／3 忽略。當時偶發 `Busy` 尚未定位；後續修復見下一段。
 
-**同日同意寫鎖收尾（未發版）：** 本機真子行程固定住 fork → exec 前的描述元繼承窗，
+**同日同意寫鎖收尾（收斂至 alpha.145）：** 本機真子行程固定住 fork → exec 前的描述元繼承窗，
 重現交易已結束卻仍回 `Busy`。寫鎖現在由 guard drop 明確解鎖，不再等子行程關閉繼承的
 handle；簽署、撤回與交易失敗都有回歸，子行程仍活著時就必須讀到正確的最新同意狀態。
 原程式兩條測試皆紅；故意提前解鎖也會被「交易尚未結束必須 Busy」的斷言抓到。
 還原後 workspace 1,996 通過／0 失敗／3 忽略；fmt、clippy、Windows root／desktop、
 同意書文案／保存、brain outbound、no-network、no-keylogging 通過。
 
-**同日 RAG 來源分類（未發版）：** RAG 不再把所有 fact／chunk 都標成 `screen`；
+**同日 RAG 來源分類（收斂至 alpha.145）：** RAG 不再把所有 fact／chunk 都標成 `screen`；
 依紀錄保留 OCR、剪貼簿、視窗標題與網址的來源，判讀另標 `reading`，無法辨認的 fact
 來源標 `unknown`。提示詞也不再把剪貼簿當成畫面文字，或把 OCR 紀錄當成圖檔仍存在。
 正式 replay 入庫 → 檢索 → RAG 回歸先紅後綠；OCR 文字與事實沿用原始 frame_id，
@@ -158,7 +157,7 @@ workspace 1,998 通過／0 失敗／3 忽略；fmt、clippy、Windows root／des
 文案／保存、brain outbound、no-network、no-keylogging 通過。
 
 
-**同日 Windows 輔助讀字（未發版）：** UIA 另一路讀取前景 Edit 控制項的可見文字，
+**同日 Windows 輔助讀字（收斂至 alpha.145）：** UIA 另一路讀取前景 Edit 控制項的可見文字，
 最多 16 段／8,192 字；沿用 HWND、PID 與擷取許可，讀取前後核對焦點、密碼與可見狀態，
 跨螢幕控制項不補字。內容工作執行緒與隱私探測分開；逾時結果丟棄，不改 OCR 退路。
 文字在慢 OCR 前取得，以 `assistive` 分開入庫、抽事實並供 RAG，引用同次保留幀；
@@ -168,7 +167,7 @@ workspace 2,005 通過／0 失敗／3 忽略；兩個隱私突變都紅、還原
 fmt、clippy、Windows root／desktop、同意書文案／保存、brain outbound、no-network、
 no-keylogging 通過。該輪 PNG／RAG 測試使用合成畫面與獨立文字；後續原生 UIA 驗證見下。
 
-**同日原生 UIA 驗證與耗時補記（未發版）：** 獨立 Windows 測試行程開啟自有 WPF 視窗，
+**同日原生 UIA 驗證與耗時補記（收斂至 alpha.145）：** 獨立 Windows 測試行程開啟自有 WPF 視窗，
 透過正式 WindowsFocus／UIA 讀到繁中電話與更新文字；捲出可見區的文字、密碼欄、按鈕
 名稱與另一視窗下的舊許可皆被拒絕。CI run `35510612780` 的原生 UIA 與實錄／停止
 檢查通過。實錄也驗回 `25ce979` 漏計耗時的修正：新增「輔助讀字」與「脈絡核對」兩列，
@@ -177,7 +176,7 @@ no-keylogging 通過。該輪 PNG／RAG 測試使用合成畫面與獨立文字�
 原生文件可見段落的擴充見下。
 
 
-**同日文件可見段落（未發版）：** UIA 讀字擴到有焦點的 Document，沿用 GetVisibleRanges、
+**同日文件可見段落（收斂至 alpha.145）：** UIA 讀字擴到有焦點的 Document，沿用 GetVisibleRanges、
 16 段／8,192 字與 900ms 截止；保留 `document` 角色，讀取途中角色改變也丟棄結果。
 CI run `35513235431` 的 Windows 原生 WPF 測試通過：唯讀文件上方繁中文字與兩段內容可讀，
 捲到底後讀到新的電話，上方舊段落不再出現；切到密碼欄、按鈕與舊視窗許可仍拒絕。
@@ -188,7 +187,7 @@ CI run `35513235431` 的 Windows 原生 WPF 測試通過：唯讀文件上方繁
 Edge 本機閱讀頁的原生驗證與修正見下。
 
 
-**同日 Edge 內層文件取證（未發版）：** 原生實跑找到 Edge 焦點 Document 沒有 TextPattern、
+**同日 Edge 內層文件取證（收斂至 alpha.145）：** 原生實跑找到 Edge 焦點 Document 沒有 TextPattern、
 介面掛在外層文件的情形。現在只替 Document 尋找同視窗內最多八層的外層文件介面，
 用 RangeFromChild 將每段可見範圍裁回原焦點文件；持續重驗焦點、祖先關係、密碼與可見性。
 CI run `35515828601` 的 Edge／WPF 原生案例通過：本機 HTML 的繁中電話、捲動後新電話可讀，
@@ -199,7 +198,7 @@ Edge 原生文字另配合成像素／系統狀態走 recorder → PNG／SQLite 
 同意／網路／鍵盤隱私檢查通過。移除裁切或放行旁邊範圍的突變都會失敗，還原後通過。
 Edge PDF 焦點頁的原生驗證與修正見下。
 
-**同日 Edge PDF 焦點頁取證（未發版）：** PDF 閱讀器的焦點可能是頁面 Group；現在只向
+**同日 Edge PDF 焦點頁取證（收斂至 alpha.145）：** PDF 閱讀器的焦點可能是頁面 Group；現在只向
 它的直接 Document 父節點取得文字介面，用 RangeFromChild 裁回原群組，保留
 `document-region` 角色。讀字前後都驗文字矩形位於目前螢幕與視窗內；同意、焦點、
 密碼、可見性與 900ms 截止照舊，不越過沒有介面的直接父文件。
@@ -211,7 +210,7 @@ RAG，每一筆事實或原文證據都核對電話、PDF 檔名與同次幀，�
 同意／網路／鍵盤隱私檢查通過。拿掉文字矩形右界檢查的突變會失敗，還原後通過。
 PDF 捲動後的 OCR 接續取證見下。
 
-**同日 PDF 翻頁 OCR 接續（未發版）：** 原生測試重現兩頁 dHash 相近、UIA 焦點留在
+**同日 PDF 翻頁 OCR 接續（收斂至 alpha.145）：** 原生測試重現兩頁 dHash 相近、UIA 焦點留在
 畫面外舊頁時，新頁被當成重複幀的漏記。輔助文字由有變無現在也觸發正常 OCR 路徑；
 提交後記住空狀態，持續缺席不會每拍重讀。舊焦點仍拒讀，不放寬 UIA 可見範圍。
 CI run `35523335448` 的 Windows 原生 PDF／Edge HTML／WPF 案例通過：PDF 兩頁使用
@@ -222,14 +221,17 @@ CI run `35523335448` 的 Windows 原生 PDF／Edge HTML／WPF 案例通過：PDF
 Windows root／desktop 編譯與 lint、同意／網路／鍵盤隱私檢查通過。
 WPF 文件的真截圖取證見下。
 
-**同日 WPF 文件真截圖取證（未發版）：** 新增原生回歸，使用自有 WPF 唯讀文件與
+**同日 WPF 文件真截圖取證（收斂至 alpha.145）：** 新增原生回歸，使用自有 WPF 唯讀文件與
 正式 GDI／Windows OCR／UIA，核對捲動前後的 SQLite 文字、存檔 PNG 再辨識及 RAG。
 上下兩支電話各自對回同次幀；OCR 與 assistive 來源均保留正確視窗標題，且不帶瀏覽器
 網址。暫停時抓圖／OCR／UIA 呼叫數不增加，恢復後可錄製；一般捲動後只讀可見新段落，
 密碼欄仍拒絕擷取。系統活動、剪貼簿與輸入使用測試替身。
 CI run `35529804355` 的 WPF／Edge HTML／PDF 原生案例通過；本機 workspace 2,011
 通過／0 失敗／3 忽略，Windows root／desktop 編譯與 lint、同意／網路／鍵盤隱私檢查通過。
-下一刀：將這批 OCR／UIA 取證改動收進下一版 Windows 安裝包。
+**alpha.145 發版收斂：** 將上述切片收進同一版。main `5f73a06` 的 PDF 原生測試曾因
+runner 背景終端機文字干擾 OCR 而失敗；測試現在自行建立全螢幕空白背景，文件視窗置前，
+不動其他行程的視窗。CI run `35530387269` 的 PDF／Edge HTML／WPF 原生步驟通過。
+正式 tag 仍須完成安裝／升級、四個 release 資產與網站發布；發布結果另補收據。
 
 
 ---
