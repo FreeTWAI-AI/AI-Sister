@@ -3637,20 +3637,24 @@ fn ask(question: String, shell: tauri::State<'_, Shell>) -> Result<Answer, Strin
         const FACTS: usize = 10;
         const HITS: usize = 20;
         let mut shape = Shape::Keywords;
+        let mut first_range = None;
         let mut fact_batches = Vec::new();
         let mut hit_batches = Vec::new();
         let mut facts_truncated = false;
         let mut truncated = false;
         for (index, retrieval_question) in retrieval_questions.iter().enumerate() {
             let retrieval = sister_core::retrieval::RetrievalProfile::TextAndFacts
-                .retrieve_with_limits(
+                .retrieve_for_question_at(
                     db,
                     retrieval_question,
+                    &question,
                     sister_core::retrieval::RetrievalLimits::new(FACTS, HITS),
+                    now,
                 )
                 .map_err(|e| format!("{e:#}"))?;
             if index == 0 {
                 shape = retrieval.shape;
+                first_range = retrieval.time_range.clone();
             }
             facts_truncated |= retrieval.answers_truncated;
             truncated |= retrieval.hits_truncated;
@@ -3809,8 +3813,8 @@ fn ask(question: String, shell: tauri::State<'_, Shell>) -> Result<Answer, Strin
                 .data_dir
                 .as_deref()
                 .ok_or_else(|| "找不到資料目錄".to_string())?;
-            let b =
-                sister_core::answer::blind_spots(db, dir, asked).map_err(|e| format!("{e:#}"))?;
+            let b = sister_core::answer::blind_spots_during(db, dir, asked, first_range.as_ref())
+                .map_err(|e| format!("{e:#}"))?;
             Some(Blind::from(b))
         } else {
             None

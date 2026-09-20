@@ -7,7 +7,7 @@
 use anyhow::{Result, ensure};
 
 use crate::activity::Activity;
-use crate::answer::{Answer, answers};
+use crate::answer::{Answer, answers_during};
 use crate::db::Db;
 use crate::model::{Millis, SearchHit};
 use crate::question::{self, Shape};
@@ -60,30 +60,45 @@ impl RetrievalProfile {
         limits: RetrievalLimits,
         now: Millis,
     ) -> Result<Retrieval> {
+        self.retrieve_for_question_at(db, question, question, limits, now)
+    }
+
+    /// CLI 可以改寫檢索詞，但原問題指定的日期優先；整題共用同一個時鐘。
+    pub fn retrieve_for_question_at(
+        self,
+        db: &mut Db,
+        query: &str,
+        question: &str,
+        limits: RetrievalLimits,
+        now: Millis,
+    ) -> Result<Retrieval> {
         ensure!(
             limits.answers > 0 && limits.text > 0,
             "retrieval limits 必須大於 0"
         );
         ensure!(!question.trim().is_empty(), "retrieval question 不可為空");
+        ensure!(!query.trim().is_empty(), "retrieval query 不可為空");
 
-        let shape = question::shape(question);
+        let shape = question::shape(query);
+        let range =
+            question::time_range(question, now).or_else(|| question::time_range(query, now));
         let (terms, answer_set, mut hits) = match shape {
-            Shape::Recent => (None, Default::default(), db.recent(limits.text + 1)?),
-            Shape::Range => {
-                let hits = match question::time_range(question, now) {
+            Shape::Recent | Shape::Range => {
+                let hits = match range.as_ref() {
                     Some(range) => db.chunks_in_range(range.from, range.to, limits.text + 1)?,
+                    None if shape == Shape::Recent => db.recent(limits.text + 1)?,
                     None => Vec::new(),
                 };
                 (None, Default::default(), hits)
             }
             Shape::Keywords => {
-                let terms = question::terms(question).to_string();
+                let terms = question::terms(query).to_string();
                 let answer_set = if self.wants_facts() {
-                    answers(db, question, limits.answers)?
+                    answers_during(db, query, limits.answers, range.as_ref())?
                 } else {
                     Default::default()
                 };
-                let hits = db.search(&terms, limits.text + 1)?;
+                let hits = db.search_during(&terms, limits.text + 1, range.as_ref())?;
                 (Some(terms), answer_set, hits)
             }
         };
@@ -104,6 +119,7 @@ impl RetrievalProfile {
         Ok(Retrieval {
             profile: self,
             shape,
+            time_range: range,
             terms,
             answers: answer_set.items,
             hits,
@@ -135,6 +151,8 @@ impl RetrievalLimits {
 pub struct Retrieval {
     pub profile: RetrievalProfile,
     pub shape: Shape,
+    /// 真正交給資料庫的時間窗；空結果的掃描說明也要使用同一個範圍。
+    pub time_range: Option<question::TimeRange>,
     /// `None` 代表時間題，沒有拿任何字去比對。
     pub terms: Option<String>,
     pub answers: Vec<Answer>,
@@ -279,6 +297,113 @@ mod tests {
         assert!(got.terms.is_none(), "日曆題沒有拿字去比對");
         assert_eq!(got.hits.len(), 1, "那段時間的原文要列得出來");
         assert!(got.hits[0].text.contains("SQLite"));
+    }
+
+    #[test]
+    fn dated_keywords_select_yesterdays_evidence_before_limiting_results() {
+        use chrono::{Local, TimeZone};
+
+        let now = Local
+            .with_ymd_and_hms(2026, 9, 20, 15, 0, 0)
+            .single()
+            .expect("local")
+            .timestamp_millis();
+        let range = question::time_range("昨天", now).expect("yesterday");
+        let mut db = Db::open_in_memory().expect("db");
+        let session = db.start_session("test", "test").expect("session");
+        let mut expected_source = None;
+        for (ts, phone) in [
+            (range.from - 1, "0800-000-123"),
+            (range.from, "0800-000-123"),
+            (range.from + 1_200_000, "0800-000-123"),
+            (range.to, "0800-000-123"),
+            (now, "0800-000-123"),
+            (now + 1, "0800-000-124"),
+            (now + 2, "0800-000-125"),
+            (now + 3, "0800-000-126"),
+        ] {
+            let inserted = db
+                .insert_frame(
+                    session,
+                    &FrameCapture {
+                        ts,
+                        monitor: 0,
+                        width: 800,
+                        height: 600,
+                        dhash: 1,
+                        image: None,
+                        image_ext: "png",
+                        ocr: vec![OcrBlock {
+                            text: format!("帳單客服專線 ID {phone}"),
+                            x: 0,
+                            y: 0,
+                            w: 300,
+                            h: 20,
+                            confidence: 1.0,
+                        }],
+                        focus: FocusSnapshot::default(),
+                    },
+                    None,
+                    0,
+                )
+                .expect("frame");
+            if ts == range.from + 1_200_000 {
+                expected_source = Some(inserted.0);
+            }
+        }
+
+        // 兩字中文、長中文、短英文整詞與數字子字串涵蓋四條取證路徑。
+        // 今天的同文紀錄必須在 LIMIT 前排除，不能先取一筆再 retain。
+        for query in ["昨天帳單", "昨天客服專線", "昨天 ID", "昨天 80"] {
+            let got = RetrievalProfile::TextAndFacts
+                .retrieve_at(&mut db, query, RetrievalLimits::same(1), now)
+                .expect("retrieval");
+            assert_eq!(got.hits.len(), 1, "{query}");
+            assert_eq!(got.hits[0].ts, range.from + 1_200_000, "{query}");
+            assert_eq!(got.hits[0].frame_id, expected_source, "仍保留同筆畫面出處");
+            assert!(got.hits_truncated, "昨天還有第二筆原文");
+        }
+
+        let got = RetrievalProfile::TextAndFacts
+            .retrieve_at(&mut db, "昨天電話", RetrievalLimits::same(1), now)
+            .expect("facts");
+        assert_eq!(got.answers.len(), 1);
+        assert_eq!(got.answers[0].latest.ts, range.from + 1_200_000);
+        assert_eq!(got.answers[0].latest.frame_id, expected_source);
+        assert_eq!(got.answers[0].sightings, 2, "只數問句時間內的目擊");
+        assert!(!got.answers_truncated, "重複目擊不是多一個答案");
+
+        for query in ["帳單", "今天帳單"] {
+            let rewritten = RetrievalProfile::TextAndFacts
+                .retrieve_for_question_at(&mut db, query, "昨天帳單", RetrievalLimits::same(1), now)
+                .expect("rewritten retrieval");
+            assert_eq!(rewritten.hits.len(), 1);
+            assert_eq!(
+                rewritten.hits[0].ts,
+                range.from + 1_200_000,
+                "改寫成 {query} 也不能丟掉原問句的昨天"
+            );
+        }
+
+        let undated = RetrievalProfile::TextAndFacts
+            .retrieve_at(&mut db, "電話", RetrievalLimits::same(1), now)
+            .expect("undated");
+        assert_eq!(
+            undated.answers[0].latest.ts,
+            now + 3,
+            "沒有指定日期仍取最新出處"
+        );
+
+        for query in ["前天早上客服專線", "前天早上電話"] {
+            let missing = RetrievalProfile::TextAndFacts
+                .retrieve_at(&mut db, query, RetrievalLimits::same(1), now)
+                .expect("no match");
+            assert!(missing.time_range.is_some());
+            assert!(
+                missing.hits.is_empty() && missing.answers.is_empty(),
+                "{query} 沒有命中不能放寬成所有日期"
+            );
+        }
     }
 
     #[test]

@@ -14910,11 +14910,16 @@ pub mod query {
         // 份——兩邊各判各的，同一句話遲早會在兩個地方得到兩種答案。
         // 計時涵蓋兩條路徑：使用者感受到的是整個回答的延遲，不是單一次查詢。
         let started = std::time::Instant::now();
-        let retrieval = sister_core::retrieval::RetrievalProfile::TextAndFacts
-            .retrieve(&mut db, text, limit)?;
+        let retrieval = sister_core::retrieval::RetrievalProfile::TextAndFacts.retrieve_at(
+            &mut db,
+            text,
+            sister_core::retrieval::RetrievalLimits::same(limit),
+            now,
+        )?;
+        let searched_range = retrieval.time_range;
         // 章節在檢索之後另算。不進 retrieval：recall harness 要求每一筆都
         // 對得回單一 `at_ms`，而章節是一個範圍。
-        let asked_chapters = db.chapters_for_question(text, sister_core::now_ms())?;
+        let asked_chapters = db.chapters_for_question(text, now)?;
         let elapsed = started.elapsed();
         let sister_core::retrieval::Retrieval {
             shape,
@@ -15136,7 +15141,12 @@ pub mod query {
                 let asked = sister_core::question::terms(text);
                 for line in blind_lines_for(
                     data_dir,
-                    &sister_core::answer::blind_spots(&db, data_dir, asked)?,
+                    &sister_core::answer::blind_spots_during(
+                        &db,
+                        data_dir,
+                        asked,
+                        searched_range.as_ref(),
+                    )?,
                 ) {
                     println!("{line}");
                 }

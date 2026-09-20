@@ -30,6 +30,16 @@ pub struct Answer {
 ///
 /// 回傳的筆數會**超過** `limit` 一筆代表被切掉了（見 [`Answers::truncated`]）。
 pub fn answers(db: &Db, query: &str, limit: usize) -> anyhow::Result<Answers> {
+    answers_during(db, query, limit, None)
+}
+
+/// 有日期的問題只合併該時間窗內的事實，出處與目擊次數跟著同一範圍。
+pub fn answers_during(
+    db: &Db,
+    query: &str,
+    limit: usize,
+    range: Option<&crate::question::TimeRange>,
+) -> anyhow::Result<Answers> {
     // 同一個號碼在三個畫面出現過，是同一個答案、三次目擊——不是三個答案。
     // 併成一筆並保留最近一次的出處，因為使用者要追的是「最後看到它的地方」。
     //
@@ -46,7 +56,7 @@ pub fn answers(db: &Db, query: &str, limit: usize) -> anyhow::Result<Answers> {
         // 一句問話可以命中兩種 kind（「多少錢」→ money 和 percent），而同一
         // 個正規化字串理論上不會跨 kind 重複。真的重複的話取比較新的那一筆，
         // 次數相加——這比讓其中一邊安靜地覆蓋掉另一邊誠實。
-        for (row, sightings) in db.fact_sightings(kind.as_str(), limit + 1)? {
+        for (row, sightings) in db.fact_sightings_during(kind.as_str(), limit + 1, range)? {
             match merged.get_mut(&row.normalized) {
                 Some(a) => {
                     a.sightings += sightings as usize;
@@ -292,6 +302,16 @@ impl BlindSpots {
 /// [`BlindSpots::scan_horizon_days`]）。三個都放在這裡判，是為了不讓終端機和
 /// 字母人各判一次——同一句話在兩個地方得到兩種答案，是這個專案反覆踩到的坑。
 pub fn blind_spots(db: &Db, data_dir: &std::path::Path, query: &str) -> anyhow::Result<BlindSpots> {
+    blind_spots_during(db, data_dir, query, None)
+}
+
+/// 指定日期的 LIKE 搜尋會查完整個指定窗，不套用預設 30 天掃描上限。
+pub fn blind_spots_during(
+    db: &Db,
+    data_dir: &std::path::Path,
+    query: &str,
+    range: Option<&crate::question::TimeRange>,
+) -> anyhow::Result<BlindSpots> {
     let stats = db.stats()?;
     let pauses = db.pause_audit()?;
     let master_stops = db.master_stop_audit()?;
@@ -320,7 +340,11 @@ pub fn blind_spots(db: &Db, data_dir: &std::path::Path, query: &str) -> anyhow::
         master_stopped_ms: master_stops.total_ms,
         master_stopped_open: master_stops.open_since.is_some(),
         master_stopped_truncated: master_stops.truncated,
-        scan_horizon_days: db.scan_horizon_days(query)?,
+        scan_horizon_days: if range.is_some() {
+            None
+        } else {
+            db.scan_horizon_days(query)?
+        },
         recording_now: beat == Some(crate::heartbeat::Phase::Recording),
         booting_now: beat == Some(crate::heartbeat::Phase::Booting),
     })
@@ -876,6 +900,23 @@ mod tests {
             short.scan_horizon_days,
             Some(30),
             "兩個字元的英數 trigram 比不出來（`80` 藏在 `0800` 裡就是這種）"
+        );
+
+        let range = crate::question::TimeRange {
+            from: 0,
+            to: 2_000,
+            said: "那一天".into(),
+        };
+        let dated = db
+            .search_during("80", 5, Some(&range))
+            .expect("dated search");
+        assert_eq!(dated.len(), 1, "明確指定的舊日期不能被最近 30 天擋掉");
+        assert_eq!(dated[0].ts, 1_000);
+        assert_eq!(
+            blind_spots_during(&db, nowhere(), "80", Some(&range))
+                .expect("dated explanation")
+                .scan_horizon_days,
+            None
         );
     }
 }

@@ -2736,6 +2736,16 @@ impl Db {
     ///
     /// 延遲預算 < 100ms（SPEC §8.2）——這是 Sister 1.0 唯一的效能硬指標。
     pub fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchHit>> {
+        self.search_during(query, limit, None)
+    }
+
+    /// 時間條件在每條索引與掃描的 LIMIT 前成立，避免較新的資料擠掉指定日期。
+    pub fn search_during(
+        &self,
+        query: &str,
+        limit: usize,
+        range: Option<&crate::question::TimeRange>,
+    ) -> Result<Vec<SearchHit>> {
         let q = fts_query(query);
         if q.is_empty() {
             return Ok(Vec::new());
@@ -2750,6 +2760,7 @@ impl Db {
                         c.text, snippet({table}, 0, '[', ']', '…', 12), bm25({table})
                  FROM {table} JOIN text_chunks c ON c.id = {table}.rowid
                  WHERE {table} MATCH ?1
+                   AND (?3 IS NULL OR c.ts >= ?3) AND (?4 IS NULL OR c.ts < ?4)
                  ORDER BY bm25({table}), c.ts DESC, c.id ASC
                  LIMIT ?2"
             );
@@ -2759,22 +2770,25 @@ impl Db {
                 Err(_) => continue, // 該索引不可用就跳過，另一個仍能作答
             };
 
-            let rows = stmt.query_map(params![q, limit as i64], |row| {
-                let kind: String = row.get(2)?;
-                Ok(SearchHit {
-                    chunk_id: row.get(0)?,
-                    ts: row.get(1)?,
-                    source_kind: SourceKind::from_str_kind(&kind).unwrap_or(SourceKind::Ocr),
-                    frame_id: row.get(3)?,
-                    app_id: row.get(4)?,
-                    window_title: row.get(5)?,
-                    url: row.get(6)?,
-                    text: row.get(7)?,
-                    snippet: row.get(8)?,
-                    // bm25 越小越好，取負值讓「分數高 = 更相關」
-                    score: -row.get::<_, f64>(9)?,
-                })
-            });
+            let rows = stmt.query_map(
+                params![q, limit as i64, range.map(|r| r.from), range.map(|r| r.to)],
+                |row| {
+                    let kind: String = row.get(2)?;
+                    Ok(SearchHit {
+                        chunk_id: row.get(0)?,
+                        ts: row.get(1)?,
+                        source_kind: SourceKind::from_str_kind(&kind).unwrap_or(SourceKind::Ocr),
+                        frame_id: row.get(3)?,
+                        app_id: row.get(4)?,
+                        window_title: row.get(5)?,
+                        url: row.get(6)?,
+                        text: row.get(7)?,
+                        snippet: row.get(8)?,
+                        // bm25 越小越好，取負值讓「分數高 = 更相關」
+                        score: -row.get::<_, f64>(9)?,
+                    })
+                },
+            );
 
             let rows = match rows {
                 Ok(r) => r,
@@ -2819,7 +2833,7 @@ impl Db {
         if hits.is_empty()
             && let Some(bq) = bigram_query(query)
         {
-            let (found, exhausted) = self.search_bigram(&bq, query, limit)?;
+            let (found, exhausted) = self.search_bigram(&bq, query, limit, range)?;
             bigram_saw_everything = exhausted;
             for hit in found {
                 if let std::collections::hash_map::Entry::Vacant(e) = seen.entry(hit.chunk_id) {
@@ -2836,7 +2850,7 @@ impl Db {
         // 在同一個 transaction 裡做完的（見 `migrate`），所以索引不會落後於
         // 資料。這時再掃一次全表只是把「查無此資料」這個答案賣得比較貴。
         if hits.is_empty() && !bigram_saw_everything {
-            for hit in self.search_like(query, limit)? {
+            for hit in self.search_like(query, limit, range)? {
                 if let std::collections::hash_map::Entry::Vacant(e) = seen.entry(hit.chunk_id) {
                     e.insert(hits.len());
                     hits.push(hit);
@@ -3258,6 +3272,7 @@ impl Db {
         match_expr: &str,
         query: &str,
         limit: usize,
+        range: Option<&crate::question::TimeRange>,
     ) -> Result<(Vec<SearchHit>, bool)> {
         let terms: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
         let first = query.split_whitespace().next().unwrap_or_default();
@@ -3267,6 +3282,7 @@ impl Db {
                           c.text, bm25(text_fts_bi)
                    FROM text_fts_bi JOIN text_chunks c ON c.id = text_fts_bi.rowid
                    WHERE text_fts_bi MATCH ?1
+                     AND (?3 IS NULL OR c.ts >= ?3) AND (?4 IS NULL OR c.ts < ?4)
                    ORDER BY bm25(text_fts_bi), c.ts DESC, c.id ASC
                    LIMIT ?2";
 
@@ -3274,22 +3290,30 @@ impl Db {
             Ok(s) => s,
             Err(_) => return Ok((Vec::new(), false)),
         };
-        let rows = stmt.query_map(params![match_expr, candidates as i64], |row| {
-            let kind: String = row.get(2)?;
-            let text: String = row.get(7)?;
-            Ok(SearchHit {
-                chunk_id: row.get(0)?,
-                ts: row.get(1)?,
-                source_kind: SourceKind::from_str_kind(&kind).unwrap_or(SourceKind::Ocr),
-                frame_id: row.get(3)?,
-                app_id: row.get(4)?,
-                window_title: row.get(5)?,
-                url: row.get(6)?,
-                snippet: make_snippet(&text, first),
-                text,
-                score: -row.get::<_, f64>(8)?,
-            })
-        });
+        let rows = stmt.query_map(
+            params![
+                match_expr,
+                candidates as i64,
+                range.map(|r| r.from),
+                range.map(|r| r.to)
+            ],
+            |row| {
+                let kind: String = row.get(2)?;
+                let text: String = row.get(7)?;
+                Ok(SearchHit {
+                    chunk_id: row.get(0)?,
+                    ts: row.get(1)?,
+                    source_kind: SourceKind::from_str_kind(&kind).unwrap_or(SourceKind::Ocr),
+                    frame_id: row.get(3)?,
+                    app_id: row.get(4)?,
+                    window_title: row.get(5)?,
+                    url: row.get(6)?,
+                    snippet: make_snippet(&text, first),
+                    text,
+                    score: -row.get::<_, f64>(8)?,
+                })
+            },
+        );
         let Ok(rows) = rows else {
             return Ok((Vec::new(), false));
         };
@@ -3355,7 +3379,12 @@ impl Db {
     }
 
     /// 子字串掃描後援。分數固定為 `LIKE_SCORE`，永遠排在 FTS 命中之後。
-    fn search_like(&self, query: &str, limit: usize) -> Result<Vec<SearchHit>> {
+    fn search_like(
+        &self,
+        query: &str,
+        limit: usize,
+        range: Option<&crate::question::TimeRange>,
+    ) -> Result<Vec<SearchHit>> {
         let terms: Vec<String> = query
             .split_whitespace()
             .map(|t| {
@@ -3391,14 +3420,18 @@ impl Db {
         let Some(newest) = newest else {
             return Ok(Vec::new());
         };
-        let cutoff = newest - LIKE_SCAN_DAYS * 86_400_000;
+        // 指定日期時掃那一段；不能再被「最新紀錄往回 30 天」蓋掉。
+        let cutoff = range.map_or(newest - LIKE_SCAN_DAYS * 86_400_000, |r| r.from);
 
         let sql = format!(
             "SELECT id, ts, source_kind, frame_id, app_id, window_title, url, text
              FROM text_chunks WHERE ts >= ?{} AND {conds}
+               AND (?{} IS NULL OR ts < ?{})
              ORDER BY ts DESC, id ASC LIMIT ?{}",
             terms.len() + 1,
-            terms.len() + 2
+            terms.len() + 2,
+            terms.len() + 2,
+            terms.len() + 3
         );
 
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = terms
@@ -3406,6 +3439,7 @@ impl Db {
             .map(|t| Box::new(t) as Box<dyn rusqlite::ToSql>)
             .collect();
         params.push(Box::new(cutoff));
+        params.push(Box::new(range.map(|r| r.to)));
         params.push(Box::new(limit as i64));
 
         let mut stmt = self.conn.prepare(&sql)?;
@@ -3461,6 +3495,16 @@ impl Db {
     /// 不是「第 41 筆目擊」。非聚合欄取自 `MAX(ts)` 那一列，靠的是 SQLite
     /// 對 min/max 的 bare column 特例（3.7.11 起有文件保證）。
     pub fn fact_sightings(&self, kind: &str, limit: usize) -> Result<Vec<(FactRow, i64)>> {
+        self.fact_sightings_during(kind, limit, None)
+    }
+
+    /// 來源、候選值與目擊次數都只取同一個問句時間窗。
+    pub fn fact_sightings_during(
+        &self,
+        kind: &str,
+        limit: usize,
+        range: Option<&crate::question::TimeRange>,
+    ) -> Result<Vec<(FactRow, i64)>> {
         // **先挑出那 10 個值，再去數它們的段。** 反過來寫（整個 kind 全表跑
         // 窗函數、最後才 `LIMIT 10`）答案一模一樣，而且短很多——但它會替 490
         // 個永遠不會被印出來的值算段，中間那個 `WINDOW` 還得先把整批列照
@@ -3480,6 +3524,7 @@ impl Db {
             "WITH answered AS (
                SELECT normalized AS value, MAX(ts) AS last_ts
                FROM facts WHERE kind = ?1
+                 AND (?4 IS NULL OR ts >= ?4) AND (?5 IS NULL OR ts < ?5)
                GROUP BY normalized
                ORDER BY last_ts DESC, value ASC LIMIT ?3
              )
@@ -3494,14 +3539,22 @@ impl Db {
                            THEN 1 ELSE 0 END AS opens_a_sitting
                FROM facts f JOIN answered ON f.normalized = answered.value
                WHERE f.kind = ?1
+                 AND (?4 IS NULL OR f.ts >= ?4) AND (?5 IS NULL OR f.ts < ?5)
                WINDOW seen AS (PARTITION BY f.normalized ORDER BY f.ts)
              )
              GROUP BY normalized
              ORDER BY ts DESC",
         )?;
-        let rows = stmt.query_map(params![kind, Self::SAME_SITTING_MS, limit as i64], |row| {
-            Ok((map_fact_row(row)?, row.get::<_, i64>(11)?))
-        })?;
+        let rows = stmt.query_map(
+            params![
+                kind,
+                Self::SAME_SITTING_MS,
+                limit as i64,
+                range.map(|r| r.from),
+                range.map(|r| r.to)
+            ],
+            |row| Ok((map_fact_row(row)?, row.get::<_, i64>(11)?)),
+        )?;
         Ok(rows.flatten().collect())
     }
 
