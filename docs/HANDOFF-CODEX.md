@@ -1,6 +1,6 @@
 # HANDOFF — 交給下一位 agent（Codex）
 
-**更新於 2026-09-15；alpha.143 產品出貨點 `2de931b`。** 這份是「打開就能接著做」的交接紀錄，不是
+**更新於 2026-09-19（§1 由席 Claude seat-authored 改寫）；最後出貨點仍是 alpha.143 `2de931b`，本機另有 15 個未推的 commit——接力細節見**本機**（未追蹤，不在這個 repo 裡）的 `HANDOFF-CODEX-SEAT-2026-09-19.md`。** 這份是「打開就能接著做」的交接紀錄，不是
 路線圖。路線圖在 `docs/PHASES.md`，規格在 `docs/SPEC.md`，產品定義在
 `docs/PRODUCT.md`，工作紀律在 `AGENTS.md`。四份都要讀，順序就是這個順序。
 
@@ -81,12 +81,14 @@
 
 | | |
 |---|---|
-| 這一段的執行者 | 原主段是 Claude Code（Opus 5, 1M context），session `e74b7a6f-34e8-4500-925c-8e0d020ac13c`；alpha.142 由 Codex 續接 |
-| 時間範圍 | 2026-09-09T05:04:30Z → 2026-09-13T05:16:53Z（UTC，約四天，中途壓縮二十餘次） |
-| 目前已出貨 HEAD | `9162cf0`，**已 push**，tag `v0.1.0-alpha.142` |
-| alpha.142 CI | tag run `34932696475` attempt 2 八個 job 全部 `success`；Release 已發布且四個 artifact 齊全 |
+| 這一段的執行者 | 原主段是 Claude Code（Opus 5, 1M context），session `e74b7a6f-34e8-4500-925c-8e0d020ac13c`；alpha.142／143 由 Codex 續接；2026-09-15～16 的 15 個 commit 由 Claude Code session `5c0ee346` 做 |
+| 時間範圍 | 2026-09-09T05:04:30Z → 2026-09-16（UTC；中途壓縮數十次） |
+| **已公開的最後一版** | **`v0.1.0-alpha.143` → `2de931b`**，published 2026-09-15 |
+| **本機 HEAD** | **`1437502`，ahead `origin/main` 15 個 commit，未 push、未 tag** |
+| 下一版版號 | 已 bump 到 `0.1.0-alpha.144`（17 個位置一致，`check-release-version.py` 綠），`docs/RELEASE-NOTES.md` 的 `## v0.1.0-alpha.144` 那一節已寫好 |
+| alpha.143 CI | tag run `34959625002` 第一次就八個 job 全部 `success`；Release 四個 artifact 齊全 |
+| alpha.142 CI | tag run `34932696475` attempt 2 八個 job 全部 `success` |
 | 本機閘門 | 本機的 gates-all.sh（見第 7 節，**不在 repo 裡**）報 **通過 52 條，失敗 0 條** |
-| 已公開的最後一版 | `v0.1.0-alpha.142`，published 2026-09-15T07:05:46Z |
 | alpha.141 真機 | 正式 Setup 覆蓋成功；舊 persona／同意／Grok／記憶保留，本機出處可點回原截圖 |
 | alpha.141 後續 | 真機 receipt／交接更新；CI 的 GitHub Actions 已升到 Node 24 majors，branch run `34793019345` 六個平台 job 全綠。沒有產品程式碼或新出貨內容 |
 
