@@ -74,6 +74,7 @@ $timer.Add_Tick({
         $mode = [IO.File]::ReadAllText($path)
         if ($mode -ne $script:pending -and $mode -ne $script:last) {
             switch ($mode) {
+                'stop' { $timer.Stop(); $window.Close(); return }
                 'edit' { $edit.ScrollToHome(); $script:activeControl = $edit }
                 'changed' { $edit.Text = 'CHANGED-SENTINEL 02-2233-4455'; $script:activeControl = $edit }
                 'document' {

@@ -1,11 +1,10 @@
-//! Native UIA against an owned WPF provider in another process. Run alone: this
+//! Native UIA against owned WPF and Edge providers. Run alone: this
 //! fixture deliberately owns the foreground. It does not inspect a user's apps.
 #![cfg(windows)]
 
-use sister_capture::{
-    CapturePermit, FocusSource, PrivacyObservation, windows::focus::WindowsFocus,
-};
+use sister_capture::{MasterStopSource, Recorder, Tick, traits::*, windows::focus::WindowsFocus};
 use sister_core::model::{AssistiveBlock, PrivacyContext, SensitiveFieldState};
+use sister_core::{config::Config, db::Db, grounded_answer, retrieval::RetrievalProfile};
 use std::{
     path::PathBuf,
     process::{Child, Command, Stdio},
@@ -17,8 +16,9 @@ struct Fixture {
     dir: PathBuf,
 }
 impl Fixture {
-    fn start() -> Self {
-        let dir = std::env::temp_dir().join(format!("sister-native-uia-{}", std::process::id()));
+    fn start(script: &str) -> Self {
+        let dir =
+            std::env::temp_dir().join(format!("sister-native-uia-{}-{script}", std::process::id()));
         std::fs::create_dir(&dir).expect("fresh fixture directory");
         let child = Command::new("powershell.exe")
             .args([
@@ -29,30 +29,31 @@ impl Fixture {
                 "Bypass",
                 "-File",
             ])
-            .arg(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/tests/fixtures/uia-visible-text.ps1"
-            ))
+            .arg(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures")
+                    .join(script),
+            )
             .arg("-StateDir")
             .arg(&dir)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::inherit())
             .spawn()
-            .expect("start owned WPF provider");
+            .expect("start owned UIA provider");
         Self { child, dir }
     }
     fn show(&mut self, mode: &str) {
         std::fs::write(self.dir.join("request"), mode).unwrap();
         let deadline = Instant::now() + Duration::from_secs(20);
         loop {
+            if let Ok(error) = std::fs::read_to_string(self.dir.join("error")) {
+                panic!("UIA fixture: {error}");
+            }
             assert!(
                 self.child.try_wait().unwrap().is_none(),
-                "WPF fixture exited before {mode}"
+                "UIA fixture exited before {mode}"
             );
-            if let Ok(error) = std::fs::read_to_string(self.dir.join("error")) {
-                panic!("WPF fixture: {error}");
-            }
             if std::fs::read_to_string(self.dir.join("ready"))
                 .ok()
                 .as_deref()
@@ -62,7 +63,7 @@ impl Fixture {
             }
             assert!(
                 Instant::now() < deadline,
-                "WPF did not focus its {mode} control"
+                "UIA fixture did not focus its {mode} control"
             );
             std::thread::sleep(Duration::from_millis(25));
         }
@@ -75,6 +76,7 @@ impl Fixture {
                     PrivacyContext::Known {
                         focus: snapshot,
                         sensitive_field,
+                        browser_url,
                         ..
                     },
                 permit,
@@ -82,10 +84,22 @@ impl Fixture {
             {
                 assert_eq!(
                     snapshot.pid,
-                    Some(i64::from(self.child.id())),
+                    Some(
+                        std::fs::read_to_string(self.dir.join("provider-pid"))
+                            .ok()
+                            .map(|pid| pid.parse::<i64>().expect("owned provider PID"))
+                            .unwrap_or(i64::from(self.child.id()))
+                    ),
                     "only the owned provider may be read"
                 );
                 if sensitive_field == expected {
+                    if self.dir.join("provider-pid").exists() {
+                        assert!(
+                            matches!(browser_url,
+                            sister_core::model::BrowserUrlState::Known(ref url) if url.contains("reader.html")),
+                            "owned browser URL must be known: {browser_url:?}"
+                        );
+                    }
                     return permit;
                 }
             }
@@ -99,6 +113,11 @@ impl Fixture {
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
+        let _ = std::fs::write(self.dir.join("request"), "stop");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while self.child.try_wait().ok().flatten().is_none() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(25));
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
         let _ = std::fs::remove_dir_all(&self.dir);
@@ -120,7 +139,7 @@ fn text(blocks: &[AssistiveBlock], role: &str) -> String {
 #[test]
 #[ignore = "owns the Windows foreground; CI runs this target in a separate process"]
 fn native_uia_reads_visible_edits_and_documents_and_rejects_excluded_text() {
-    let mut fixture = Fixture::start();
+    let mut fixture = Fixture::start("uia-visible-text.ps1");
     fixture.show("edit");
     let mut focus = WindowsFocus::new();
     let permit = fixture.observe(&mut focus, SensitiveFieldState::Clear);
@@ -176,5 +195,152 @@ fn native_uia_reads_visible_edits_and_documents_and_rejects_excluded_text() {
     assert!(text(&focus.assistive_text(other_permit), "edit").contains("OTHER-WINDOW-SENTINEL"));
     println!(
         "SISTER-UIA: VERIFIED visible-chinese fresh-text document-paragraphs document-scroll no-offscreen no-password no-button stale-window-denied"
+    );
+}
+
+// Native browser text + synthetic pixels/system state exercise the real recorder
+// and RAG without claiming this 8x8 image is a screenshot of Edge.
+struct FixturePixels;
+impl ScreenSource for FixturePixels {
+    fn grab(&mut self, ts: i64) -> anyhow::Result<Option<RawFrame>> {
+        Ok(Some(RawFrame::from_rgba(ts, 0, 8, 8, vec![255; 8 * 8 * 4])))
+    }
+}
+struct FixtureSystem;
+impl SystemSource for FixtureSystem {
+    fn poll(&mut self, _: i64) -> anyhow::Result<SystemObservation> {
+        Ok(SystemObservation::active())
+    }
+}
+fn browser_recorder(dir: PathBuf) -> Recorder<impl Backend> {
+    let mut config = Config::default();
+    config.capture.ocr = false;
+    config.capture.image_min_interval_ms = 0;
+    Recorder::new(
+        CompositeBackend {
+            name: "Edge text / synthetic frame fixture".into(),
+            system: FixtureSystem,
+            screen: FixturePixels,
+            focus: WindowsFocus::new(),
+            clipboard: NullClipboard,
+            input: NullInput,
+            ocr: NullOcr,
+        },
+        Db::open_in_memory().unwrap(),
+        config,
+        Some(dir),
+        MasterStopSource::NotApplicable,
+    )
+    .unwrap()
+}
+fn retained(tick: Tick) -> i64 {
+    match tick {
+        Tick::Kept { frame_id, .. } => frame_id,
+        other => panic!("expected retained browser text: {other:?}"),
+    }
+}
+
+#[test]
+#[ignore = "owns an isolated Edge profile and Windows foreground; CI runs alone"]
+fn native_edge_reader_visible_paragraphs_scroll_and_privacy() {
+    let mut fixture = Fixture::start("uia-edge-reader.ps1");
+    fixture.show("top");
+    let mut focus = WindowsFocus::new();
+    let permit = fixture.observe(&mut focus, SensitiveFieldState::Clear);
+    let initial = text(&focus.assistive_text(permit), "document");
+    assert!(
+        initial.contains("網頁電話 0800-333-444"),
+        "Edge visible text: {initial:?}"
+    );
+    assert!(initial.contains("EDGE-SECOND-PARAGRAPH"));
+    assert!(!initial.contains("EDGE-BOTTOM"));
+    assert!(!initial.contains("HIDDEN-SENTINEL"));
+    let mut recorder = browser_recorder(fixture.dir.clone());
+    let top_frame = retained(recorder.tick(1000).unwrap());
+
+    fixture.show("bottom");
+    // The fixture changes its title to acknowledge the scroll. A fresh observation
+    // is required; the old capture context must not authorize this new state.
+    assert!(!focus.is_current(permit).unwrap());
+    assert!(focus.assistive_text(permit).is_empty());
+    let scrolled_permit = fixture.observe(&mut focus, SensitiveFieldState::Clear);
+    let bottom = text(&focus.assistive_text(scrolled_permit), "document");
+    assert!(
+        bottom.contains("EDGE-BOTTOM 02-7766-5544"),
+        "Edge scrolled text: {bottom:?}"
+    );
+    assert!(!bottom.contains("0800-333-444"));
+    assert!(!bottom.contains("EDGE-SECOND-PARAGRAPH"));
+    let bottom_frame = retained(recorder.tick(2000).unwrap());
+    assert_ne!(top_frame, bottom_frame);
+    for (id, phone, excluded) in [
+        (top_frame, "0800-333-444", "02-7766-5544"),
+        (bottom_frame, "02-7766-5544", "0800-333-444"),
+    ] {
+        let blocks = recorder.db().assistive_blocks(id).unwrap();
+        let body = text(&blocks, "document");
+        assert!(body.contains(phone));
+        assert!(!body.contains(excluded));
+        let image_path: String = recorder
+            .db()
+            .conn()
+            .query_row("SELECT image_path FROM frames WHERE id=?1", [id], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(
+            image::open(fixture.dir.join(image_path))
+                .unwrap()
+                .to_rgba8()
+                .as_raw(),
+            &vec![255; 8 * 8 * 4]
+        );
+    }
+    let got = RetrievalProfile::TextAndFacts
+        .retrieve(recorder.db_mut(), "phone", 10)
+        .unwrap();
+    let rag = grounded_answer::prepare("phone", &[], &got.answers, &got.hits, 3000)
+        .unwrap()
+        .unwrap();
+    assert_eq!(rag.sources.len(), 2);
+    assert!(rag.sources.iter().all(|s| s.origin.as_str() == "assistive"));
+    let mut ids: Vec<_> = rag.sources.iter().map(|s| s.frame_id.unwrap()).collect();
+    ids.sort_unstable();
+    assert_eq!(ids, vec![top_frame, bottom_frame]);
+
+    fixture.show("password");
+    assert!(!focus.is_current(permit).unwrap());
+    assert!(focus.assistive_text(permit).is_empty());
+    let password = fixture.observe(&mut focus, SensitiveFieldState::Focused);
+    assert!(focus.assistive_text(password).is_empty());
+    assert!(!matches!(recorder.tick(3000).unwrap(), Tick::Kept { .. }));
+    assert_eq!(recorder.timings().assistive.calls, 2);
+
+    fixture.show("address");
+    let observation = focus.context(0).unwrap();
+    assert!(
+        matches!(
+            observation,
+            PrivacyObservation::Known {
+                context: PrivacyContext::Known {
+                    browser_url: sister_core::model::BrowserUrlState::Unknown,
+                    ..
+                },
+                ..
+            } | PrivacyObservation::Unknown
+        ),
+        "editing address must never authorize a page"
+    );
+    assert!(focus.assistive_text(permit).is_empty());
+    assert!(!matches!(recorder.tick(4000).unwrap(), Tick::Kept { .. }));
+    assert_eq!(recorder.timings().assistive.calls, 2);
+    let count: i64 = recorder
+        .db()
+        .conn()
+        .query_row("SELECT COUNT(*) FROM frames", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(count, 2);
+    println!(
+        "SISTER-EDGE-UIA: VERIFIED visible-chinese scroll same-frame-rag no-hidden no-password address-unknown"
     );
 }

@@ -787,8 +787,8 @@ jobs:
             windows::tests::production_recorder_drop_drains_callbacks_before_stop_can_complete \
             -- --exact --ignored --nocapture --test-threads=1
 
-      # This owns a synthetic WPF window; don't mix foreground state with parallel tests.
-      - name: UIA — read native WPF edits and document paragraphs; reject excluded text
+      # These own synthetic WPF/Edge windows; run alone to isolate foreground state.
+      - name: UIA — read WPF and Edge visible paragraphs; reject excluded text
         timeout-minutes: 3
         run: cargo test -p sister-capture --test windows_uia -- --ignored --nocapture --test-threads=1
 
