@@ -129,6 +129,13 @@ Windows tag job 的 OCR 實測記號是 `SISTER-OCR-ZH: SKIPPED lang=en-US zh=no
 fmt、clippy、Windows cross-check、同意書文案／保存、brain outbound、no-network、
 no-keylogging、主對話與證據視窗檢查通過。這些不代替真 Windows 的 OCR 或畫面驗收。
 
+**同日下一刀（未發版）：** 英文查詢的事實類型改按完整詞辨認，避免 `hotel`、`profile`、
+`update` 分別因 `tel`、`file`、`date` 片段帶出不相關電話、檔案與日期。大小寫、複數、
+中英相接及明確的 `telephone` 仍可查；中文詞維持連寫。資料庫 → RAG 回歸先在原程式
+重現，再驗正確文字來源與不相關事實排除；fixture 使用畫面標題，沒有宣稱跑過真 OCR。
+工作區測試 1,994 通過／0 失敗／3 忽略；fmt、clippy、同意書文案／保存、brain outbound、
+no-network 與 no-keylogging 通過。
+
 ---
 
 ## 2. Spec → 現在：八個 Phase 的完成度

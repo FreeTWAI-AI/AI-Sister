@@ -210,6 +210,7 @@ pub fn kinds_for_query(query: &str) -> Vec<FactKind> {
         ("門號", FactKind::Phone), // 台灣講手機就是講這兩個字，帳單上也印這個
         ("分機", FactKind::Phone),
         ("phone", FactKind::Phone),
+        ("telephone", FactKind::Phone),
         ("tel", FactKind::Phone),
         ("金額", FactKind::Money),
         ("價格", FactKind::Money),
@@ -257,7 +258,16 @@ pub fn kinds_for_query(query: &str) -> Vec<FactKind> {
     let q = query.to_lowercase();
     let mut out: Vec<FactKind> = Vec::new();
     for (word, kind) in TABLE {
-        if q.contains(word) && !out.contains(kind) {
+        // 英文必須是獨立詞（可接複數 s），不能把 hotel 的 tel、profile 的
+        // file 或識別字 error_code 當成類型要求。中文沒有空白，仍允許連寫；
+        // 共用的 ASCII 邊界也保留「phone是多少」這種中英相接的問法。
+        let matches = q.match_indices(word).any(|(start, _)| {
+            let end = start + word.len();
+            !word.is_ascii()
+                || ascii_word_boundary(&q, start, end)
+                || (q[end..].starts_with('s') && ascii_word_boundary(&q, start, end + 1))
+        });
+        if matches && !out.contains(kind) {
             out.push(*kind);
         }
     }
@@ -1129,6 +1139,57 @@ mod tests {
         // 認不出來就回空的，不猜
         assert!(kinds_for_query("我昨天在幹嘛").is_empty());
         assert!(kinds_for_query("").is_empty());
+    }
+
+    #[test]
+    fn words_and_identifiers_do_not_accidentally_request_fact_types() {
+        for query in [
+            "hotel booking",
+            "profile settings",
+            "update release",
+            "updated",
+            "costume",
+            "blink",
+            "whenever",
+            "telephone_directory",
+            "error_code",
+            "user_email",
+            "file2",
+            "myphone",
+            "DATE_FORMAT",
+        ] {
+            assert!(kinds_for_query(query).is_empty(), "{query}");
+        }
+    }
+
+    #[test]
+    fn explicit_english_fact_words_keep_case_punctuation_plurals_and_chinese_neighbors() {
+        for query in [
+            "PHONE number",
+            "(tel)",
+            "電話phone",
+            "phone是多少",
+            "phones",
+            "telephone",
+        ] {
+            assert_eq!(kinds_for_query(query), vec![FactKind::Phone], "{query}");
+        }
+        for (query, kind) in [
+            ("files", FactKind::FilePath),
+            ("emails", FactKind::Email),
+            ("e-mail", FactKind::Email),
+            ("URLs", FactKind::Url),
+            ("prices", FactKind::Money),
+            ("dates", FactKind::DateTimeMention),
+            ("errors", FactKind::ErrorCode),
+        ] {
+            assert_eq!(kinds_for_query(query), vec![kind], "{query}");
+        }
+        assert_eq!(kinds_for_query("hotel phone"), vec![FactKind::Phone]);
+        assert_eq!(
+            kinds_for_query("profile file path"),
+            vec![FactKind::FilePath]
+        );
     }
 
     #[test]
