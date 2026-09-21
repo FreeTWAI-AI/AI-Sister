@@ -1,5 +1,8 @@
 # HANDOFF — 交給下一位 agent（Codex）
 
+**2026-09-21 交回 Claude 的紀錄在 [`HANDOFF-CLAUDE-2026-09-21.md`](HANDOFF-CLAUDE-2026-09-21.md)。**
+那份寫的是當天 Codex session `01a0c443` 與後續 Grok session 做到哪、main 在 `5cfd22c`、語音／用量已在 main、PDF UIA 與 diagnose 堆疊怎麼修、macOS probe 為何還沒上。下面這份仍是到 alpha.145 為止的長交接。
+
 **更新於 2026-09-20（Codex 續接）；alpha.145 已公開，release commit 是 `9ed66e5`。** Claude 的原始交接保留在本機的
 `HANDOFF-CODEX-SEAT-2026-09-19.md`，已加入本機 Git exclude，不進公開提交。
 本輪起點、成果、停點與未完成重點，先看[簡短交接](HANDOFF-SUMMARY-2026-09-20.md)。
