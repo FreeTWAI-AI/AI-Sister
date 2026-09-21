@@ -545,18 +545,16 @@ fn real_db_prints_no_drive_sentence_when_the_target_raw_no_longer_matches() {
     let (dir, _, _) = run_case("drive-raw-mismatch", "chrome.exe", false);
     {
         let conn = rusqlite::Connection::open(Config::db_path(&dir)).unwrap();
-        let target_id: i64 = conn
-            .query_row(
-                "SELECT id FROM facts WHERE raw = ?1",
+        // Address-bar URLs and on-screen text can both extract the same raw.
+        // The guard is `fact.raw == expected_raw` on the cited row; any leftover
+        // copy of the old URL would still look like the original target.
+        let n = conn
+            .execute(
+                "UPDATE facts SET raw = 'https://new.example/not-the-old-target' WHERE raw = ?1",
                 [OTHER_APP_URL],
-                |r| r.get(0),
             )
             .unwrap();
-        conn.execute(
-            "UPDATE facts SET raw = 'https://new.example/not-the-old-target' WHERE id = ?1",
-            [target_id],
-        )
-        .unwrap();
+        assert!(n >= 1, "the planted URL fact must exist to replace");
     }
     let out = sister(
         &dir,
