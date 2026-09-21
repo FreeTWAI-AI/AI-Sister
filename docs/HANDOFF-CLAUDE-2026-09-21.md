@@ -101,7 +101,10 @@ Document 的 `GetVisibleRanges` 會把畫面外的那一頁也算進去。`SetFo
 
 所以現在的契約是：
 
-- **產品**（`crates/sister-capture/src/windows/text.rs`，`175f70e`）：焦點若是自帶 TextPattern 的 Document，而且底下剛好有一個在螢幕上、頁面大小的 Group，就把可見範圍剪到那個 Group 的 `RangeFromChild`。兩個那麼大的 Group 同時在螢幕上時不剪。走查有上限（128 個節點、深度 6），避免把一次文字讀取變成整棵樹。角色仍是焦點元素自己的：Document 就是 `"document"`，Group 才是 `"document-region"`。
+- **產品**（`crates/sister-capture/src/windows/text.rs` 接線、`page_crop.rs` 判定，`175f70e` 起、alpha.146 改寫）：焦點若是自帶 TextPattern 的 Document，就從它的直接子節點開始**廣度優先**走查，找畫面上、頁面大小的 Group，用 `RangeFromChild` 把可見範圍剪到那一個。走查上限仍是 128 個節點、深度 6，**沒有調大**。
+  結局有三種，只有第一種會剪：走完而且剛好一個合格（剪）／走完而且零個合格（不剪，這是「量過了，沒有」）／沒走完（不剪，這是「還沒數完」）。多加一條例外：沒走完、但**深度 1 那一層全部觀察過**、而且那一層剛好一個合格時也剪，更深處的合格節點不拿來頂替。理由是 `77078fa` 在原生 CI 上量到較寬的走查會被 text run 把 128 用完（`large=0`），而加上直接子節點那一關之後是 `scanned=23 groups=2 large=1`。
+  判定整個搬進 `page_crop.rs`，是純函式，Linux 的 `cargo test` 跑得到（22 條）。`text.rs` 那半只負責 COM 走查與 `nodes[i]`／`elements[i]` 對齊，仍然**沒有任何執行覆蓋**。
+  角色仍是焦點元素自己的：Document 就是 `"document"`，Group 才是 `"document-region"`。
 - **測試**（`windows_uia.rs`）：第一頁文字接受 `"document"` 或 `"document-region"`。捲動之後若 UIA 是空的，代表焦點還在已經跑到畫面外的第一頁 Group，存下來的 assistive blocks 也必須是空的。若 UIA 不是空的，代表焦點仍是活著的 Document，文字必須是現在這一頁（`02-6655-4433`），而且不能再含第一頁的 `0800-444-555`。
 - **Fixture**（`uia-edge-reader.ps1`）：
   - Edge reader 用 **STA** 啟動（`ae95d08`）。HTML 那條在 STA 上仍通過過。
