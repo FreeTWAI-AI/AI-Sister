@@ -2,6 +2,7 @@
 
 **更新於 2026-09-20（Codex 續接）；alpha.145 已公開，release commit 是 `9ed66e5`。** Claude 的原始交接保留在本機的
 `HANDOFF-CODEX-SEAT-2026-09-19.md`，已加入本機 Git exclude，不進公開提交。
+本輪起點、成果、停點與未完成重點，先看[簡短交接](HANDOFF-SUMMARY-2026-09-20.md)。
 這份是「打開就能接著做」的交接紀錄，不是
 路線圖。路線圖在 `docs/PHASES.md`，規格在 `docs/SPEC.md`，產品定義在
 `docs/PRODUCT.md`，工作紀律在 `AGENTS.md`。四份都要讀，順序就是這個順序。
@@ -124,6 +125,8 @@ Windows 安裝、重裝、移除、alpha.110 → current 記憶保留與簽章 f
 後續 `4eed7f4` 只修測試：啟用自有文件視窗、等 UIA Document 確實持有焦點才 ready，捲動也
 保留文件焦點；不改出貨程式。新 main run `35532733393` 的三案原生 UIA、Windows 完整測試與
 recorder 接線通過；本機 Windows 編譯／lint 與網路／鍵盤隱私檢查通過。
+後續確認：`4eed7f4` 的 main run `35532733393` 與發布收據 `301e1bc` 的 run `35533936551`
+均已完整成功，六個平台 job 全綠；main 的 Release／Website 按規則跳過，正式發布收據仍取 tag run。
 
 **alpha.144 發布收據（2026-09-20）：** Ted 已明確授權 push／tag；`258a755` 的 main CI
 通過後才建立 annotated tag。Release 是公開 prerelease，四個檔案全部 `uploaded`：
@@ -385,9 +388,9 @@ exit criterion 仍未勾，是因為同站 path、redirect 與當場按的邊界
 
 ## 5. 下一步最小可驗證步驟（照順序，打開就能做）
 
-**2026-09-20 現行下一步：** alpha.144 已公開，不重切同版、不重做 overview。
-用正式 alpha.144 Setup 驗六項新增的朗讀停止／失敗／設定提示，以及下方步驟 3
-仍未收回的背景連續理解、完整回答與零命中 smoke；照真實結果記錄。
+**2026-09-20 現行下一步：** alpha.145 已公開，本輪版本收斂完成。
+接續用正式 alpha.145 Setup 收回中文日常文件的 OCR／UIA／RAG 出處、alpha.144 六項
+朗讀停止／失敗／設定提示，以及下方步驟 3 仍未收回的背景連續理解、完整回答與零命中結果。
 下方步驟 1–2 是歷史完成紀錄。Windows GA 的其他退場條件繼續依 `docs/PHASES.md` 推進。
 
 ### 步驟 1（已完成）：確認交接點的 CI
@@ -416,9 +419,9 @@ gh run list --limit 3 --json headSha,status,conclusion \
 假紅）。打完 tag 要回頭確認 release job 真的跑了——linux job 一紅，release job 會
 被靜靜跳過。
 
-### 步驟 3（進行中）：在 alpha.142 正式 artifact 上驗背景連續理解與完整回答
+### 步驟 3（進行中）：在現行 alpha.145 正式 artifact 上驗背景連續理解與完整回答
 
-alpha.142 的 release job 已公開四個 artifact；CI 已驗 build、installer、alpha.110→current
+alpha.145 的 release job 已公開四個 artifact；CI 已驗 build、installer、alpha.110→current
 升級與記憶保留，但不冒充 Ted 的真日常畫面。先安裝正式 Setup，照
 `docs/WINDOWS-CHECKLIST.md` 新增的兩條 S1 項目實測：
 
