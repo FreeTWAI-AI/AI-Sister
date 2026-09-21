@@ -766,6 +766,34 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      # 在原生 UIA／截圖與 workspace 測試之前嘗試安裝，讓同一輪所有 OCR 走相同語言。
+      # runner 預設只有英文 OCR，於是「中文會不會被逐字切開」這一題永遠停在
+      # 「跳過」——而那是這個產品的主要語言。裝上繁中語言包讓它真的被驗到。
+      #
+      # 只在打 tag 或手動觸發時跑：`Add-WindowsCapability` 要跟 Windows Update
+      # 要一份 FOD，實測會掛在那裡超過 20 分鐘（很可能被 runner 的網路擋掉）。
+      # 每次 push 都付這個代價不值得，發版的時候值得試一下。
+      # timeout + continue-on-error 是為了讓它最壞情況只是浪費幾分鐘，不會卡死。
+      #
+      # **但它到今天為止一次都沒成功過**（八分鐘的 timeout 每次都吃滿）。
+      # `continue-on-error` 會讓這一步在摘要上回報 success，所以這裡先講清楚：
+      # 這一步是「試試看」，不是「驗過了」。真的驗到中文沒有的話，下一步會掛一
+      # 個黃色 annotation 在 run 摘要上，而唯一問得到真實答案的地方是 Ted 那台
+      # 真的裝了中文的 Windows（docs/WINDOWS-CHECKLIST.md）。
+      - name: Install Traditional Chinese OCR language pack
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+        continue-on-error: true
+        timeout-minutes: 8
+        shell: powershell
+        run: |
+          foreach ($cap in @("Language.Basic~~~zh-TW~0.0.1.0", "Language.OCR~~~zh-TW~0.0.1.0")) {
+            Write-Host "Installing $cap"
+            try { Add-WindowsCapability -Online -Name $cap -ErrorAction Stop | Out-Null }
+            catch { Write-Host "  failed: $_" }
+          }
+          Get-WindowsCapability -Online -Name "Language.OCR*" |
+            Where-Object State -eq Installed | Select-Object -ExpandProperty Name
+
       # These own synthetic WPF/Edge windows; run alone to isolate foreground state.
       - name: UIA — read WPF and Edge visible paragraphs; reject excluded text
         timeout-minutes: 3
@@ -805,33 +833,6 @@ jobs:
         env:
           AI_SISTER_ALLOW_ASSET_NETWORK: "1"
         run: cargo test -p sister-assets --features download fixed_network_path_downloads_validates_installs_and_removes -- --ignored --nocapture
-
-      # runner 預設只有英文 OCR，於是「中文會不會被逐字切開」這一題永遠停在
-      # 「跳過」——而那是這個產品的主要語言。裝上繁中語言包讓它真的被驗到。
-      #
-      # 只在打 tag 或手動觸發時跑：`Add-WindowsCapability` 要跟 Windows Update
-      # 要一份 FOD，實測會掛在那裡超過 20 分鐘（很可能被 runner 的網路擋掉）。
-      # 每次 push 都付這個代價不值得，發版的時候值得試一下。
-      # timeout + continue-on-error 是為了讓它最壞情況只是浪費幾分鐘，不會卡死。
-      #
-      # **但它到今天為止一次都沒成功過**（八分鐘的 timeout 每次都吃滿）。
-      # `continue-on-error` 會讓這一步在摘要上回報 success，所以這裡先講清楚：
-      # 這一步是「試試看」，不是「驗過了」。真的驗到中文沒有的話，下一步會掛一
-      # 個黃色 annotation 在 run 摘要上，而唯一問得到真實答案的地方是 Ted 那台
-      # 真的裝了中文的 Windows（docs/WINDOWS-CHECKLIST.md）。
-      - name: Install Traditional Chinese OCR language pack
-        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
-        continue-on-error: true
-        timeout-minutes: 8
-        shell: powershell
-        run: |
-          foreach ($cap in @("Language.Basic~~~zh-TW~0.0.1.0", "Language.OCR~~~zh-TW~0.0.1.0")) {
-            Write-Host "Installing $cap"
-            try { Add-WindowsCapability -Online -Name $cap -ErrorAction Stop | Out-Null }
-            catch { Write-Host "  failed: $_" }
-          }
-          Get-WindowsCapability -Online -Name "Language.OCR*" |
-            Where-Object State -eq Installed | Select-Object -ExpandProperty Name
 
       # 微軟的文件說 Windows.Media.Ocr 需要 package identity，也就是這支
       # 沒打包的 exe 理論上叫不動它。實務上叫得動——這一步就是把「理論上」
