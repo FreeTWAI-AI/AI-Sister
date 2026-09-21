@@ -48,6 +48,7 @@ function Get-SisterPdfPage {
             Offscreen = [bool]$focused.Current.IsOffscreen
             Scope = $scope
             Visible = $visible
+            Top = [int]$focused.Current.BoundingRectangle.Y
         }
     } catch {
         return $null
@@ -291,11 +292,16 @@ window.addEventListener('keydown', event => {
             $page = Get-SisterPdfPage
             $ancestors = @(Get-SisterLivePdfVisible)
             if ($null -ne $page) {
-                $extra += "focused-page=[$($page.Scope)] visible=[$($page.Visible)] offscreen=$($page.Offscreen)"
+                $extra += "focused-page=[$($page.Scope)] visible=[$($page.Visible)] offscreen=$($page.Offscreen) top=$($page.Top)"
                 $extra += (@($ancestors | ForEach-Object { "ancestor$($_.Depth) offscreen=$($_.Offscreen) visible=[$($_.Visible)]" }))
                 if ($mode -eq 'bottom') {
                     $live = $ancestors | Where-Object { $_.Visible.Contains('PDF-SECOND') -and -not $_.Visible.Contains('PDF-FIRST') } | Select-Object -First 1
-                    $ready = $page.Offscreen -and $page.Scope.Contains('PDF-FIRST') -and $null -ne $live
+                    # Native CI leaves TextPattern visible-ranges on the old page
+                    # (empty or still PDF-FIRST). The first-page Group moving fully
+                    # above the viewport is the scroll; product UIA still refuses it.
+                    $ready = $page.Offscreen -and $page.Scope.Contains('PDF-FIRST') -and (
+                        ($null -ne $live) -or ($page.Top -lt -100)
+                    )
                 } else {
                     $ready = -not $page.Offscreen -and $page.Scope.Contains('PDF-FIRST') -and $page.Visible.Contains('PDF-FIRST')
                 }
