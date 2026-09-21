@@ -347,6 +347,8 @@ fn strip_fact_question_edges(mut text: &str) -> &str {
         "告訴我",
         "請問",
         "我要",
+        "要繳",
+        "要",
         "是多少",
         "是什麼",
         "有多少",
@@ -1320,6 +1322,7 @@ mod tests {
         assert_eq!(topic_constraint("電話是多少"), None);
         assert_eq!(topic_constraint("請幫我找昨天電話"), None);
         assert_eq!(topic_constraint("我要繳多少"), None);
+        assert_eq!(topic_constraint("要繳多少錢"), None);
         assert_eq!(
             topic_constraint("what was the phone number yesterday"),
             None

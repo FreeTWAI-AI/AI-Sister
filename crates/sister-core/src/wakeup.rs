@@ -2745,7 +2745,7 @@ sys.stdout.buffer.write(json.dumps(card).encode('utf-8'))
             "失敗的修正不可以寫新卡"
         );
         assert!(
-            engine.correction_attempts.get(&first).is_some(),
+            engine.correction_attempts.contains_key(&first),
             "失敗快照要記下來：{:?}",
             engine.correction_attempts
         );
