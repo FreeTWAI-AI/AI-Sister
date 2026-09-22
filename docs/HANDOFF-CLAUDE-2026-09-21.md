@@ -727,3 +727,72 @@ a148 的說明草稿，標題原本是：
 驗的腳本留在 `/home/ted-h/tmp-tests/review-20260922/verify-release-a148.sh`：
 對 gh 一律測 `= "success"`（它把還沒跑到的步驟回成 `""` 不是 `null`），
 body 比前綴不比相等。
+
+
+## 15. alpha.149 出貨收據（2026-09-22 晚上）
+
+四件事一起出：第一次開啟先選角色、同意書改成按鈕、朗讀變開關、
+答案泡泡裡的 guardrail 句搬進「為什麼」。閘門 663 → 747。
+
+### 15.1　我審出來、delegate 沒自己發現的
+
+1. **一句出貨的畫面文字變成假的。** `apps/desktop/ui/settings.html:86` 原本寫
+   「只有你在當張按下才播放」。那句話在 a149 之前是真的，是 a149 讓它變假的。
+   它就在 delegate 這一輪加 checkbox 的**同一個檔案裡，差 77 行**。
+
+2. **角色清單讀不到會把整個產品鎖死。** catalog 不合契約時畫面印
+   「請重新開啟 AI-Sister」而 `firstPersona.hidden` 留在 `false`，
+   於是 `ask()` 第一行 `if (!firstPersona.hidden) return;` 無聲吞掉每一個字，
+   同意書永遠不出現，重開會再失敗一次。
+   `!== 17` 這個寫法是 repo 的慣例，另外三處都是優雅降級（`return empty` /
+   `Object.freeze([])`）——**慣例會被整段複製，慣例的失敗成本不會**。
+   修法是跳過選角直接進同意書，等於退回這個功能存在之前的行為。
+
+3. **三道「回來的東西要和我送出去的一致」的守衛，747 條斷言一條都沒守到。**
+   既有的失敗夾具清一色是「invoke 直接 reject」，沒有一個是
+   「resolve 了但內容不對」——而後者才是這個 repo 最怕的那種謊。
+
+4. **收貨之後我自己拿舊識別字重掃，又撈到兩處。** delegate 改了 9 處過期句子
+   （其中第 9 處是它自己多找到的），仍漏了 `AGENTS.md` 裡同一句全稱句
+   和 `app.js` 一段引用舊按鈕名的註解。
+   **`AGENTS.md` 特別要看：未來的 agent 會把它當權威讀。**
+
+### 15.2　我自己的量測出過兩次錯
+
+- 我把 shell function 取名叫 `cut`，蓋掉 `/usr/bin/cut`。突變腳本的
+  ✔／✗ **數字全對，紅掉的斷言名字整段消失**。指紋是「摘要對得上，明細空的」。
+- `cmd | tail -5; echo "exit=$?"` 報的是 `tail` 的結局，
+  於是「fmt exit=0」是假的，`cargo fmt` 的真正結局從來沒被讀到。
+  同一輪 `cargo test -p sister-core consent_read_aloud` 配到 0 條測試、exit 0，
+  讀起來和通過一模一樣——解析 `N passed; M failed` 並要求 N+M ≥ 1 才看得出來。
+
+### 15.3　一條偶發紅，不是這次改動造成的
+
+`check-erased-db.sh` 在 52 條裡紅過 1 次，訊息是
+「正在錄的那一場被算成了一次當機」。同一棵樹重跑 2 次都綠、base 對照組綠、
+打 tag 前的 detached 全閘門也綠（4 次紅 1 次）。改動全在 UI／config／docs，
+碰不到 recorder 生命週期。**成因沒有證明**，只證明了它不是決定性的、也不是這次造成的。
+CI 比開發機慢，窗口只會更寬。
+
+### 15.4　收據
+
+| 項目 | 值 |
+|---|---|
+| tag → commit | `9aa0a2d` |
+| 那顆 commit 的樹 | `b3941997bdbc6eb0cd2a52af5f98025e1e7cc25d` |
+| 打 tag 前的閘門 | detached worktree @ `9aa0a2d`，**52 條全綠**，樹指紋 `63661f0b6444763c` 跑完沒變 |
+| main run 35776069967 | 六個 job 全 `success`（`Release`／`Website` `skipped`，它們是 tag-gated） |
+| tag run 35776072748 | **八個 job 全 `success`**，含 `Release` 與 `Website` |
+| `draft` / `prerelease` | `false` / `true` |
+| 資產 | 4 個，全部 `uploaded`、全部非空 |
+| `AI-Sister-Setup.exe` | 277,940,420 bytes |
+| `AI-Sister-Linux-X11-amd64.deb` | 65,491,970 bytes |
+| `sister-desktop.exe` | 71,833,088 bytes |
+| `sister.exe` | 11,162,624 bytes |
+| body | 與本機重算的輸出**前綴相符**，後面只多了 101 字的 `**Full Changelog**` |
+| 發布時間 | 2026-09-22T20:38:57Z |
+
+驗的腳本留在 `/home/ted-h/tmp-tests/review-20260922/verify-release-a149.sh`。
+它第一次跑是紅的，**紅在它自己身上**——我用 `sed` 從 a148 那份改出來，
+版號換了而裡面寫死的那顆 commit sha 沒換。
+改的是「我量過的那顆 sha」，不是判斷邏輯。
