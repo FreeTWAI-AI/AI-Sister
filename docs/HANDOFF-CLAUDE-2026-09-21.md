@@ -474,3 +474,57 @@ grok 照派工單留了 `{ once: true }` 這個選項，但沒有任何呼叫端
 它在成功路徑的 catch 裡暫時加過三行「把 `disabled` 放回來」，量到**拿掉那三行
 整份 gate 仍然全綠**，於是沒有把它留在交出去的檔案裡，並在 `RESULT-R7B.md` 裡
 寫明白。那是對的處置——沒有人守的「修法」不該出貨。
+
+## 12. alpha.147 出貨收據（2026-09-22 凌晨）
+
+### 12.1　第一次打的 tag 沒有發出去，原因是我自己造的
+
+`a642039` 打了 tag，CI 的 `Linux — test, lint, privacy` 紅在
+`check-docs-point-somewhere.py`，release job 被靜靜跳過（`skipped`），
+`gh release view` 回 `release not found`。
+
+成因不是那道閘門錯了。是**我在它蓋過 ✓ 之後**，才把 §11 接到同一份文件後面，
+而那一節把閘門腳本的裸檔名放進了反引號。checker 的規則寫在
+`scripts/check-docs-point-somewhere.py` 的 `BARE`：反引號裡只要是裸的 `*.sh`、
+`*.py`、`*.mjs`，一律往 scripts/ 底下解析。那條規則是對的——讀的人就是會去那裡
+找——而那支閘門腳本是本機工具，repo 裡沒有這個檔。
+
+（所以這一節提到它的時候一律寫絕對路徑：帶斜線又不在那五個前綴裡的，checker
+不管。這不是在繞過閘門，絕對路徑本來就比裸檔名更能讓讀的人找到它。）
+
+一句話：**閘門的綠，只對它跑過的那棵樹有效。**
+
+### 12.2　修法不是「記得重跑」
+
+`1a47bca` 修掉那一行之後，我做的是兩件事：
+
+1. 打 tag 前的最後一次閘門，跑在 `git worktree add --detach <sha>` 開出來的
+   worktree 上。detached 是「我沒辦法順手改一行」的機械保證。
+   收據：52 條全綠，而且跑完 `git status --porcelain` 的追蹤檔改動是 0 個。
+2. 給 `/home/ted-h/tmp-tests/gates-all.sh` 本身加一道護欄：開場與收尾各量一次
+   `sha256(HEAD + git diff HEAD)`，不一樣就 exit 5、不印「全綠」、列出改到的檔。
+   只看被追蹤的內容，所以閘門自己生的 `ci-audit/`、`stats.json` 不會誤報。
+   三刀驗過（不動＝綠、跑到一半 append 一個被追蹤的檔＝exit 5、只生未追蹤產物＝綠）。
+
+### 12.3　tag 移動與出貨收據
+
+`v0.1.0-alpha.147` 從 `a642039` 移到 `1a47bca`。移動是安全的：那個 tag
+從頭到尾沒有產生過任何 release，沒有人下載過任何東西。
+tag message 是從舊 tag 抽出來存成檔案再餵回去的，不是手抄的。
+
+| 項目 | 值 |
+|---|---|
+| tag → commit | `1a47bca` |
+| CI run | 全部 job `success`，`Release` `success` |
+| `draft` / `prerelease` | `false` / `true` |
+| 資產 | 4 個，全部 `uploaded`，全部非空 |
+| `AI-Sister-Setup.exe` | 277,941,511 bytes |
+| `AI-Sister-Linux-X11-amd64.deb` | 65,487,158 bytes |
+| `sister-desktop.exe` | 71,816,704 bytes |
+| `sister.exe` | 11,161,600 bytes |
+| body | 與本機重算的 `release-notes.sh` 輸出**前綴相符**；後面只多了 `**Full Changelog**` 那一段 |
+
+順帶一個值得記的事實：**tag run 是 main run 的超集。** `ci.yml` 有四處
+`if: startsWith(github.ref, 'refs/tags/v')`，所以 installer 安裝／重裝／移除、
+alpha.110 相容基準、整套簽章 fixture 只在 tag 上跑。
+main 全綠不能拿來預測 tag 會不會綠。

@@ -511,6 +511,12 @@ export PATH="$HOME/.cargo/bin:$PATH"
 # ── 一次跑完所有閘門（本機工具，不在 repo 裡；要帶 worktree 參數）──
 bash /home/ted-h/tmp-tests/gates-all.sh /home/ted-h/projects/AI-Sister
 #   交接時：通過 52 條，失敗 0 條
+#
+#   2026-09-22 起它會先後量兩次「被追蹤的樹」（HEAD + git diff HEAD 的 sha256）。
+#   跑的途中那棵樹被改過的話，它 **exit 5 而且不印「全綠」**——因為上面每一個 ✓
+#   蓋的是一個已經不存在的中間狀態。收據那行會寫出它量的是哪一顆 HEAD、哪一份
+#   樹指紋，讀的時候要看那一行，不要只看最後一句。
+#   打 tag 之前最後一次要對著 `git worktree add --detach <sha>` 跑。
 
 # ── Rust ──
 cargo fmt --all -- --check
