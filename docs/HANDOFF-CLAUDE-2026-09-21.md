@@ -339,3 +339,88 @@ R7 收尾的時候我把那條族規套到全部六個 WebView JS 檔：抓出�
 PHASES.md 裡**沒有** BreezyVoice 的條目，也沒有用量／LimitReset 看板的條目，而這兩個
 都已經在 alpha.146 出貨了。我沒有自己發明 roadmap 條目回填——那會變成拿我自己的稽核標準
 當專案方向。要補的話那是 Ted 的決定。
+
+---
+
+## 10. R7 的收貨結果（2026-09-21 深夜）
+
+R7 交回來的東西**方向是對的**，素材三支和 `setCombo` 我驗過沒問題。
+但它有兩個缺口，兩個都是跑出來的，不是讀出來的。
+
+### 10.1　`setLoginStartup` 的成功路徑沒補，而且我的判準看不見它
+
+R7 補的是失敗路徑。成功那一行重畫仍然留在外層 `try` 裡：
+
+```js
+  const startupView = await invoke("login_startup_set", { enabled });
+  loginStartupBusy = false;
+  paintLoginStartup(startupView);        // ← 丟例外就掉進底下那個 catch
+} catch (err) {
+  const actionError = `變更 Windows 登入項失敗：${…}`;
+```
+
+我讓 `login_startup_set` **成功**、讓那一行重畫丟例外，畫面實際印出來的是：
+
+```
+變更 Windows 登入項失敗：repaint failed
+重新讀取後：已登錄：Windows 登入項精確符合這一版預期的命令。…
+```
+
+送出去了、後端收下了（`login_startup_set` 呼叫 1 次），第一句說它失敗。
+
+**為什麼我漏了**：上一輪我立的判準是「補滿兩道護欄的函式有 3 個 `catch`」——
+那條規則抓到了 `setCombo`（2 < 3）。`setLoginStartup` 數到 **4**，比族規還高，
+讀起來像「比補滿還滿」，於是我沒再看它。多出來的第 4 個是不相干的臂
+（`login_startup_set` 失敗之後那條重讀也失敗）。
+
+**離群值偵測只往下看。** 一個靠計數的判準，要先問「這個數字還會因為什麼別的理由動」。
+正確的單位不是函式，是**每一個 `await invoke(` 呼叫端**：它後面那句重畫，
+不可以落在會印失敗句的那個 `catch` 的射程內。
+
+### 10.2　四處「補畫」是死碼，而五條斷言靠夾具才綠
+
+R7 在四個地方寫了 `try { paintX(v); } catch { try { paintX(v); } catch {} }`
+（`setLoginStartup`、`setUsageConfig`、`setPersonaVoice` ×2）。
+
+三支 painter 都是**同步**的（`await` 0 處、`invoke` 0 處），第一次丟到補畫之間
+沒有交錯點，全域和 DOM 一個位元組都不會變——補畫必然丟在同一行。
+它在測試裡看起來有用，是因為 `throwOnceOnText` **只丟一次**。兩把刀證明它們是同一根槓桿：
+
+| 刀 | 動的是 | 結果 |
+|---|---|---|
+| H：拿掉四處補畫，夾具不動 | 產品 | 紅，**同樣那 5 條** |
+| I：夾具改成每次都丟，產品一個位元組不動 | 夾具 | 紅，**同樣那 5 條** |
+
+倒下的五條全是正面句（「畫面上是重新讀取後已登錄」「畫出已開啟、還沒查過」…）。
+
+**這一節的責任在我。** 我上一輪寫的驗收條件是「要斷言一個正面的東西，
+證明重畫真的又跑了一次而且跑完了」——那句話對一個決定性的失敗做不到，
+於是唯一能滿足它的做法就是加一段補畫再配一個只丟一次的夾具。
+是我的判準把那段死碼叫出來的。
+
+決定性失敗底下對使用者真正的承諾只有三條，三條都成立：
+**不說謊**（畫面不含那句失敗承諾，針取整串片語）、**例外不跑掉**、
+**這一頁沒有卡死**（`busy` 清掉、控制項沒留在 `disabled`，
+painter 修好之後下一次重讀會收斂到真相）。第三條現在沒有人在守。
+
+### 10.3　R7b 已派工
+
+派工單：`/home/ted-h/tmp-tests/review-20260921/BRIEF-A147-R7B.md`（本機）。
+只動 `settings.js` 和 `check-settings-say.mjs`。收完之後才輪到 squash → bump → tag。
+
+### 10.4　掃完 22 個呼叫端之後，留給 a148 的
+
+- `openPlatformAccess`（macOS 限定，低）和 `diagnose_export` 按鈕（中，冪等所以只是白做工）
+  是同一族，但**不塞進 a147**——同一個檔已經動了 12 個呼叫端。
+- **`save`（`settings_write`）刻意不改**：它的註解寫著「讀不回來就不要蓋掉
+  `load()` 剛印上去的那則錯誤⋯⋯那件事比『存好了』急」。同意。
+- **更好的形狀已經在同一個檔裡**：`cancelBrainCli` 的 `try`/`catch` 裡**只算狀態**，
+  `paintBrain()` 在外面畫一次。沒有另一臂可以掉進去，這個 bug 在結構上寫不出來。
+  a148 值得把那一族收斂成這個形狀，順便拆掉 R7 留下的巢狀 `try`——
+  但那是**重構不是修 bug**，要自己一版，前後行為用同一份 gate 釘住。
+
+### 10.5　main 的 CI
+
+`5707a22` 的 run `35671862572` 全綠：6 個真 job `success`，
+`Website` 和 `Release` 是 `skipped`（沒有 tag，正確）。
+狀態是問 `gh api repos/…/actions/runs/<id>/jobs` 來的，不是 `gh run view --json`。
