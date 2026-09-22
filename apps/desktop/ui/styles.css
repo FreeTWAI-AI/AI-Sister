@@ -1519,3 +1519,27 @@ body.has-consent-guide .answer-bubble {
 .first-persona-choices button { display: flex; flex-direction: column; align-items: center; padding: 4px; }
 .first-persona-choices img { width: 58px; height: 68px; object-fit: contain; }
 .first-persona-choices button[aria-pressed="true"] { outline: 2px solid var(--letter-accent, #4b8071); }
+
+.cli-status {
+  position: absolute;
+  top: 50px;
+  left: 8px;
+  right: 8px;
+  z-index: 12;
+  background: rgb(255 255 255 / 97%);
+  color: var(--letter-fg);
+  margin: 0;
+  padding: 8px 12px;
+  border: 1px solid currentColor;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+  text-align: left;
+  max-height: 45vh;
+  overflow-y: auto;
+}
+.cli-status summary { cursor: pointer; }
+.cli-status ul { padding-left: 18px; }
+.cli-status p, .cli-status li { margin: 6px 0; }
+
+.cli-status .usage-reset-line { position: static; max-width: none; }

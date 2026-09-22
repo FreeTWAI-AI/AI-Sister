@@ -311,7 +311,7 @@ fn clean_version(line: &str) -> String {
         .to_owned()
 }
 
-fn detect(provider: BrainProvider) -> Option<PathBuf> {
+pub(crate) fn detect(provider: BrainProvider) -> Option<PathBuf> {
     detect_in(
         provider,
         std::env::var_os("PATH").as_deref(),
@@ -398,6 +398,9 @@ fn run_managed<S: AsRef<std::ffi::OsStr>>(
     timeout: Duration,
     state: &Arc<AtomicU8>,
 ) -> Result<RunOutput, String> {
+    if state.load(Ordering::Acquire) == JOB_CANCELLING {
+        return Err("查詢已停止".to_owned());
+    }
     let mut command = Command::new(executable);
     command.args(args);
     if visible_console {
@@ -563,5 +566,273 @@ mod tests {
         assert_eq!(state.load(Ordering::Acquire), JOB_CANCELLING);
         drop(claim);
         assert_eq!(state.load(Ordering::Acquire), JOB_IDLE);
+    }
+}
+
+// Login snapshots are memory-only; never included in config, logs or exports.
+#[derive(Clone, Debug, Serialize)]
+pub struct LoginRow {
+    id: &'static str,
+    status: String,
+}
+
+#[derive(Default)]
+pub struct LoginStatus {
+    pub state: Arc<AtomicU8>,
+    cache: std::sync::Mutex<Option<(Instant, Vec<LoginRow>)>>,
+}
+
+impl LoginStatus {
+    pub fn cancel(&self) {
+        let mut cache = self
+            .cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        cancel(&self.state);
+        *cache = None;
+    }
+
+    pub fn read(&self, _claim: BusyClaim, refresh: bool) -> Result<Vec<LoginRow>, String> {
+        if !refresh {
+            let cache = self.cache.lock().map_err(|_| "問不到；請重新查詢")?;
+            if let Some((at, rows)) = cache.as_ref()
+                && at.elapsed() < Duration::from_secs(60)
+            {
+                return Ok(rows.clone());
+            }
+        }
+        let rows = BrainProvider::ALL
+            .into_iter()
+            .map(|provider| {
+                let status = match detect(provider) {
+                    None => "未安裝".to_owned(),
+                    Some(path) => match provider {
+                        BrainProvider::Claude => login_probe(
+                            provider,
+                            &path,
+                            &["auth", "status"],
+                            &self.state,
+                            VERSION_TIMEOUT,
+                        ),
+                        BrainProvider::Codex => login_probe(
+                            provider,
+                            &path,
+                            &["login", "status"],
+                            &self.state,
+                            VERSION_TIMEOUT,
+                        ),
+                        _ => "已安裝".to_owned(),
+                    },
+                };
+                LoginRow {
+                    id: provider.id(),
+                    status,
+                }
+            })
+            .collect::<Vec<_>>();
+        let mut cache = self.cache.lock().map_err(|_| "問不到；請重新查詢")?;
+        if self.state.load(Ordering::Acquire) == JOB_CANCELLING {
+            return Err("查詢已停止".to_owned());
+        }
+        *cache = Some((Instant::now(), rows.clone()));
+        Ok(rows)
+    }
+}
+
+fn login_probe(
+    provider: BrainProvider,
+    path: &Path,
+    args: &[&str],
+    state: &Arc<AtomicU8>,
+    timeout: Duration,
+) -> String {
+    run_managed(path, args, None, false, timeout, state)
+        .ok()
+        .map(|output| login_text(provider, &output))
+        .unwrap_or_else(|| "問不到；請重新查詢".to_owned())
+}
+
+fn login_text(provider: BrainProvider, output: &RunOutput) -> String {
+    let unknown = "問不到；請重新查詢".to_owned();
+    if output.timed_out || output.cancelled {
+        return unknown;
+    }
+    match provider {
+        BrainProvider::Claude => {
+            #[derive(serde::Deserialize)]
+            #[serde(rename_all = "camelCase")]
+            struct Auth {
+                logged_in: bool,
+                auth_method: Option<String>,
+                email: Option<String>,
+                subscription_type: Option<String>,
+            }
+            let Ok(auth) = serde_json::from_str::<Auth>(&output.stdout) else {
+                return unknown;
+            };
+            if !auth.logged_in {
+                return "未登入".to_owned();
+            }
+            if output.exit_code != Some(0) {
+                return unknown;
+            }
+            let clean = |value: Option<String>| {
+                value.filter(|s| {
+                    !s.trim().is_empty() && s.len() <= 256 && !s.chars().any(char::is_control)
+                })
+            };
+            let Some(method) = clean(auth.auth_method) else {
+                return unknown;
+            };
+            format!(
+                "已登入（{}） · 帳號：{} · 方案：{}",
+                method,
+                clean(auth.email).unwrap_or_else(|| "CLI 未提供".to_owned()),
+                clean(auth.subscription_type).unwrap_or_else(|| "CLI 未提供".to_owned())
+            )
+        }
+        BrainProvider::Codex => {
+            let text = format!("{}\n{}", output.stdout.trim(), output.stderr.trim());
+            match (output.exit_code, text.trim()) {
+                (Some(0), "Logged in using ChatGPT") => "已登入（ChatGPT）".to_owned(),
+                (Some(1), "Not logged in") => "未登入".to_owned(),
+                _ => unknown,
+            }
+        }
+        _ => unknown,
+    }
+}
+
+#[cfg(test)]
+mod login_tests {
+    use super::*;
+    fn output(text: &str) -> RunOutput {
+        RunOutput {
+            stdout: text.into(),
+            stderr: String::new(),
+            exit_code: Some(0),
+            cancelled: false,
+            timed_out: false,
+        }
+    }
+    #[test]
+    fn malformed_claude_is_unknown() {
+        for text in ["oops", "{}", r#"{"loggedIn":"yes"}"#] {
+            assert_eq!(
+                login_text(BrainProvider::Claude, &output(text)),
+                "問不到；請重新查詢"
+            );
+        }
+    }
+    #[test]
+    fn login_fields_and_absence_are_honest() {
+        assert_eq!(
+            login_text(
+                BrainProvider::Claude,
+                &output(
+                    r#"{"loggedIn":true,"authMethod":"oauth","email":"fixture@example.test","subscriptionType":"pro"}"#
+                )
+            ),
+            "已登入（oauth） · 帳號：fixture@example.test · 方案：pro"
+        );
+        assert_eq!(
+            login_text(BrainProvider::Claude, &output(r#"{"loggedIn":false}"#)),
+            "未登入"
+        );
+        assert_eq!(
+            login_text(BrainProvider::Codex, &output("Logged in using ChatGPT")),
+            "已登入（ChatGPT）"
+        );
+        assert_eq!(
+            login_text(BrainProvider::Codex, &output("new format")),
+            "問不到；請重新查詢"
+        );
+    }
+    #[test]
+    fn timeout_never_uses_success_text() {
+        let mut value = output("Logged in using ChatGPT");
+        value.timed_out = true;
+        assert_eq!(
+            login_text(BrainProvider::Codex, &value),
+            "問不到；請重新查詢"
+        );
+    }
+    #[cfg(unix)]
+    #[test]
+    fn actual_timeout_is_unknown() {
+        let state = Arc::new(AtomicU8::new(JOB_ACTIVE));
+        assert_eq!(
+            login_probe(
+                BrainProvider::Codex,
+                Path::new("/bin/sh"),
+                &["-c", "printf 'Logged in using ChatGPT'; sleep 10"],
+                &state,
+                Duration::from_millis(50)
+            ),
+            "問不到；請重新查詢"
+        );
+    }
+    #[cfg(unix)]
+    #[test]
+    fn actual_malformed_claude_is_unknown() {
+        let state = Arc::new(AtomicU8::new(JOB_ACTIVE));
+        assert_eq!(
+            login_probe(
+                BrainProvider::Claude,
+                Path::new("/bin/sh"),
+                &["-c", "printf unexpected"],
+                &state,
+                Duration::from_secs(2)
+            ),
+            "問不到；請重新查詢"
+        );
+    }
+    #[cfg(unix)]
+    #[test]
+    fn cancel_terminates_running_probe_and_prevents_next_spawn() {
+        let state = Arc::new(AtomicU8::new(JOB_ACTIVE));
+        let worker_state = Arc::clone(&state);
+        let worker = std::thread::spawn(move || {
+            run_managed(
+                Path::new("/bin/sh"),
+                &["-c", "sleep 30"],
+                None,
+                false,
+                Duration::from_secs(10),
+                &worker_state,
+            )
+        });
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(cancel(&state));
+        let result = worker.join().unwrap().unwrap();
+        assert!(result.cancelled);
+        assert!(
+            run_managed(
+                Path::new("/path/that/must/not/be/spawned"),
+                &["status"],
+                None,
+                false,
+                Duration::from_secs(1),
+                &state
+            )
+            .unwrap_err()
+            .contains("查詢已停止")
+        );
+    }
+    #[test]
+    fn cache_cancel_and_restart() {
+        let runtime = LoginStatus::default();
+        *runtime.cache.lock().unwrap() = Some((
+            Instant::now(),
+            vec![LoginRow {
+                id: "fixture",
+                status: "cached".into(),
+            }],
+        ));
+        let rows = runtime.read(begin(&runtime.state).unwrap(), false).unwrap();
+        assert_eq!(rows[0].status, "cached");
+        runtime.cancel();
+        assert!(runtime.cache.lock().unwrap().is_none());
+        assert!(LoginStatus::default().cache.lock().unwrap().is_none());
     }
 }
