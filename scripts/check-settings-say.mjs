@@ -144,7 +144,6 @@ const USAGE_OFF = {
   local_skipped_auth: 0,
   local_scan_complete: true,
   local_products: [],
-  local_unknown_reason: "剩餘 token 未知。",
   board_live: false,
   board_updated_at: null,
   products: [],
