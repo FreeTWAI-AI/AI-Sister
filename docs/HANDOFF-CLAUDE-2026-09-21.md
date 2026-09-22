@@ -145,7 +145,10 @@ Windows 主執行緒預設 1MB。debug 組裝那份已在磁碟上的稽核報�
 
 ## 5. main 上現在有什麼
 
-`origin/main` = `5cfd22c`。自 `9eebbff` 之後可以分成三段：
+> **2026-09-21 稍晚更新：這一節以下寫的是 `5cfd22c` 當時的狀態。現在 `origin/main` = `54173d0`，
+> 已經打上 `v0.1.0-alpha.146`。`5cfd22c` 之後多了六個 commit，見第 9 節。**
+
+`origin/main` 當時 = `5cfd22c`。自 `9eebbff` 之後可以分成三段：
 
 1. **PDF UIA 與 diagnose 堆疊**，`9e4fd8b` 到 `4da7d5c`。見第 3、4 節。中間有一個已不再使用的執行緒實驗 `8d81377`，下一個 commit 把它撤掉了。
 2. **BreezyVoice + usage**，`eb048f0`..`f32aeb2`。從整合分支 cherry-pick，沒有衝突。cherry-pick 之後拿 desktop、tts、usage、`config.rs`、capture、`sister-cli`、三支 check script、`AGENTS.md` 與隱私文件對 `origin/codex/grok-sweep-20260921` 做過 `git diff`，那些路徑是空的。
@@ -179,7 +182,14 @@ Windows 主執行緒預設 1MB。debug 組裝那份已在磁碟上的稽核報�
 
 ## 7. 接手時不要做的事
 
-- 不要切 tag，不要發 release，不要為了這次掃蕩 bump `alpha.145`。使用者沒有要求。
+- ~~不要切 tag，不要發 release，不要為了這次掃蕩 bump `alpha.145`。使用者沒有要求。~~
+  **2026-09-21 稍晚，接手的 Claude session 推翻了這一條，並且切了 `v0.1.0-alpha.146`。**
+  理由：這句話擋的是「為了一次沒有使用者可見內容的掃蕩去 bump 版號」，那個判斷是對的。
+  但 `5cfd22c` 之後又做進去的東西不是掃蕩——刪不掉的截圖不再留字、PDF 只剪證得出來的那一頁、
+  本機台灣語音與公開用量看板兩個預設關閉的選配，都是使用者看得到的行為改變。而 `AGENTS.md`
+  裡 Ted 的常設指示是「做完一段就切 tag」。
+  **Ted 本人沒有對這個決定表過態。** 要是他希望 tag 一律等他點頭，改回來的成本只有一句話：
+  把這一條的刪除線拿掉，並在 `AGENTS.md` 裡把那句常設指示改掉。
 - 不要把 HTTP client 加進 recorder／core／capture／brain／hands，也不要加進 WebView。
 - 不要把 LimitReset、BreezyVoice、CDN、Azure 寫進 WebView CSP。
 - 不要重做擷取路徑（DXGI、降 `OCR_LONG_EDGE`、再跑一輪 changed-region 對抗）。`AGENTS.md` 第五節的數字仍然有效。
@@ -194,10 +204,138 @@ Windows 主執行緒預設 1MB。debug 組裝那份已在磁碟上的稽核報�
 
 ## 8. 建議的下一步
 
-1. `5cfd22c` 的 main CI [35645786858](https://github.com/teddashh/AI-Sister/actions/runs/35645786858) 已綠。整合分支同一個 fixture 的 [35645789163](https://github.com/teddashh/AI-Sister/actions/runs/35645789163) 也綠。語音／用量就在 main 這個 HEAD 上。這就是可留的 main。不要自己切 tag。
+1. ~~`5cfd22c` 的 main CI [35645786858](...) 已綠……這就是可留的 main。不要自己切 tag。~~
+   **過期。** 可留的 main 現在是 `54173d0`，CI [35664163423](https://github.com/teddashh/AI-Sister/actions/runs/35664163423) 六個 job 全綠，已打 `v0.1.0-alpha.146`。見第 9 節。
 2. 若下一次 Edge PDF 又紅，先讀 fixture 的 `stage`／`metadata`，不要再加一輪無上限的樹走查。
    - stage 停在 `activating PDF viewport`、metadata 空白：掛點在點擊或 `^{HOME}`，或在就緒迴圈的 `Get-SisterPdfPage`。
    - 第一幀 OCR 只有 `reader.pdf` 和暫存路徑：頁面 canvas 還沒畫進 BitBlt。現在的等待是 2.5 秒。
    - 第二幀沒有 `02-6655-4433`：Ctrl+End 沒有把第二頁底部送進截圖。不要改回短滾輪。
 3. macOS probe 若要做，從 `wt-platforms` 的 `1e4c2fa` rebase 到當時的 main，再跑原生 macOS CI。那條不是 Preview。
 4. 隱私閘門仍是 `./scripts/check-no-network.sh`、同意書那幾支 `check-consent-*`、`check-no-keylogging.py`。四條 outbound 的名字以 `AGENTS.md` 開頭那節和 `77cc93b`／`c4434f2` 的文件為準。
+
+---
+
+## 9. 接手的 Claude session 做了什麼（2026-09-21 稍晚）
+
+### 已出貨：`v0.1.0-alpha.146`（`54173d0`）
+
+`f7f416c` 之上六個 commit，CI 六個 job 全綠：
+
+```
+54173d0 release: v0.1.0-alpha.146 — 刪不掉的截圖不留字，兩個預設關閉的選配
+f13dea3 docs: the PDF clip is breadth-first with a depth-1 exception
+8acaafc fix: say how many rows lost their words when a screenshot will not delete
+4bbcc61 fix: clip a PDF page only when the walk proves exactly one
+69c8151 fix: do not call a board recalled from disk a live result
+16e63ae fix: hold the local voice toggle to what the service answered
+```
+
+四個資產：`AI-Sister-Setup.exe`、`sister.exe`、`sister-desktop.exe`、`AI-Sister-Linux-X11-amd64.deb`。
+
+**收據（不是宣稱）。** tag 那一次的 run 是
+[35667618922](https://github.com/teddashh/AI-Sister/actions/runs/35667618922)，八個 job 全綠
+（六個建置 job ＋ `Release` ＋ `Website`）。打完 tag 之後另外跑了一支不採信 workflow 自述的
+驗證腳本，四項分開驗：
+
+- `Release` job 的 conclusion 是 `success`（Linux job 一紅的話這個 job 會被靜靜跳過）。
+- 遠端資產剛好四個、名字一字不差、大小都非零
+  （`.deb` 65,486,002／`AI-Sister-Setup.exe` 277,939,954／`sister-desktop.exe` 71,816,192／`sister.exe` 11,159,552 位元組）。
+- `isDraft=false`、`isPrerelease=true`——release 是先建成 draft、由另一個步驟讀 GitHub 自己的
+  狀態確認資產之後才公開的，所以「已公開」要另外問一次。
+- body 比**前綴**：本機用 `scripts/release-notes.sh` 重算，4,809 個字元一字不差；
+  後面那 104 個字元是 `generate_release_notes: true` 附加的 Full Changelog，不是我寫的。
+  （比相等會每次假紅、grep 關鍵詞會漏真問題。）
+
+`4bbcc61` 值得單獨講。第 3 節那個走查原本是深度優先、128 個節點上限，撞到上限就不剪。
+問題不在方向而在機率：這個 repo 自己的探針夾具 `uia-edge-reader.ps1` 註解寫著「較寬的走查
+會被 text run 填滿預算」，而 `77078fa` 的 commit body 有第一手的原生 CI 實測（`large=0`，
+預算用完）。所以修法不是把 128 調大——那是拿機率換機率——而是改成廣度優先，並且多一條
+「深度 1 那層全部看完、而且剛好一塊符合」的例外。判定限制在深度 1 反而**降低**誤剪機率：
+深處包著 text run 的容器也可能大於 200×80 而且和螢幕交疊。
+
+純判定搬進 `crates/sister-capture/src/page_crop.rs`（22 條測試，Linux 上跑得到），
+`windows/text.rs` 只留接線。這是這個 repo 對付「`#[cfg(windows)]` 零執行覆蓋」的固定招式。
+
+### 還沒上 main：a147
+
+- worktree `/home/ted-h/tmp-tests/wt-a147-usageview`，分支 `a147-usageview`
+- **沒有 push，沒有 bump 版號，沒有寫 RELEASE-NOTES。**
+- R1：用量畫面那層純判定從 `apps/desktop/src-tauri/src/usage_status.rs` 搬進 `sister-usage`
+  底下一個新的 `view` 模組（6 條測試）。桌面那棵樹在這台機器上編不起來，所以
+  那層判定本來一條 Linux 測試都沒有。`sister-usage` **沒有**因此依賴 `sister-core`——
+  那條邊會去連不存在的 `libsqlite3`；四個設定欄位由接線層抄成 `UsageSettings` 再送進去。
+- R2/R3：設定頁 Azure 三支函式補上和本機語音同一組的兩道內層 `try/catch`。
+  那兩道分別守著：**甲** `catch` 裡 `await refreshX()` 穿出例外就畫不出失敗句；
+  **乙** `invoke` 成功之後的重畫丟例外會被**外層** `catch` 接走，於是畫面把一次
+  **已經成功**的保存說成「金鑰沒有保存」。乙是比較嚴重的那一半。
+- **R7（已寫好派工單，還沒做）**：素材那三支（`installPersonaAssets`、
+  `cancelPersonaAssetInstall`、`removePersonaAssets`）甲乙兩道**一道都沒有**，
+  形狀和 Azure 完全相同；`refreshPersonaAssets` 也是自己有內層 catch、
+  只在它的 catch 裡再丟時才會穿出來。`removePersonaAssets` 的乙特別嚴重：
+  刪除**真的完成了**，畫面卻說「刪除沒有完成」或「刪除結果無法確認」，
+  使用者會以為素材還在磁碟上。另外 `setLoginStartup` 是另一個形狀——
+  `login_startup_read` 成功回來、重畫丟例外，卻被寫死成「變更後也讀不回」。
+  `setCombo` 的**甲**是這一頁寫得最好的一支（它的註解把這一族講對了），
+  但它的**乙**是破的：`paintHotkey(await invoke("hotkey_set", { combo }))` 把 invoke
+  和重畫寫在同一個運算式裡，`hotkey_set` 成功而 `paintHotkey` 丟例外的時候，
+  外層 catch 會走到 `restoreCombo()`——**把選單寫回舊組合**，而後端記的是新的。
+  那不是一句不精確的話，是一個和事實相反的狀態。
+  （我第一版把它標成兩道都有，是因為讀到那段把 A 洞診斷得很準的註解就結案了。
+  後來是機械地數每支 handler 的 `catch` 個數才抓到：補滿兩道的四支各有 3 個，
+  `setCombo` 只有 2 個。）
+- **R5**：`served_words_are_six_distinct_labels` 那個手寫的 `6` 拿掉——案例改成從
+  `ServedFrom::ALL` 走、斷言改成 `assert_eq!(produced.len(), cases.len())`，測試也改名。
+  加第七個變體並對到和 `Network` 同一個字，現在會紅；**這一刀在修之前是綠的**。
+  `ALL` 漏列新變體仍然編得過，那是絆線不是窮舉證明，程式碼註解和下面的量測都這樣寫。
+- **R6**：PF-2 修好了（原本記在下一節「沒有修」那裡）。`SiblingRead` 三態
+  （`Item` / `End` / `Failed`）取代 `.ok()`，`sibling_chain` 回 `SiblingChain { items,
+  truncated_by_error }`。截斷記**兩筆**分開的旗標——深度 1 的串被截斷讓 `DepthOneComplete`
+  不算看完，任何一層被截斷讓 `walk_finished = false`——而不是併成一個 bool。
+  **截斷不清掉 `finished`**：`pop_front()` 開頭是 `if !self.finished { return None; }`，
+  在截斷時清掉會把走查**停住**，廣度優先之下深處的一次截斷會讓還沒 pop 的深度 1 兄弟
+  全部擱淺，於是 `depth_one_observed < direct_enqueued` 自己就讓那層不完整，
+  把失敗旗標拿掉測試仍然會綠。`PAGE_WALK_NODE_CAP` 仍是 128、`PAGE_WALK_DEPTH_CAP` 仍是 6。
+  `page_crop::tests` 22 → 28 條，舊的 22 條一條沒刪、斷言的值一個字沒改。
+- R4：`local_unknown_reason` 刪掉。那個欄位從 `69bcca9` 出生到現在沒有任何讀取端，
+  而它兩個建構點都寫死「剩餘 token 未知。」，`remaining_tokens` 是 `Measured::Observed`
+  的時候也照樣這樣說，而且有 `#[derive(Serialize)]`，真的會送進 WebView。
+
+### 記下來但**沒有修**的兩條
+
+> **PF-2 已經不在這張單子上了**——它就是上面的 R6。原本記在這裡的內容
+> （`sibling_chain` 用 `.ok()` 把「COM 讀失敗」和「到底了」壓成同一個 `None`，
+> 於是五個直接子節點在第三個之後讀失敗會被當成「一共三個而且都看過了」，
+> 前三個裡剛好一個合格就真的會剪，而 `4bbcc61` 特地防的「兩塊都合格就不要剪」
+> 被一個 COM 錯誤繞過去）留在版本歷史裡。
+
+1. **PF-3**：`nodes[i]` 和 `elements[i]` 是平行陣列，而這個不變量跨在 `#[cfg(windows)]`
+   邊界上，沒有任何測試守得到它。現在靠 `debug_assert_eq!(nodes.len(), elements.len())`。
+2. `usage_status.rs` 剩下的接線層仍然 0 條測試。但 macOS job（`ci.yml:452`）**會**對桌面
+   那棵樹跑 `cargo test`，所以加在那裡的測試是跑得到的，只是本機驗不了。
+
+### 同一族在 `settings.js` 以外（掃過了，留給 a148）
+
+R7 收尾的時候我把那條族規套到全部六個 WebView JS 檔：抓出每一支含 `await invoke(` 的
+函式（52 支），數它們的 `catch` 個數。補滿兩道護欄的長 3、`setCombo` 長 2、其餘多半長 1。
+然後把數出來的嫌疑犯一個一個**讀完**——這一步不能省，因為用 catch 的前幾行當判準會誤判：
+
+- **`app.js::handleConsentReply` 不是這一族，不要改。** 它的失敗句是
+  `這一張沒有保存：…`，看起來就是寫死的否定句，但它的 `try` 裡有**兩道回讀驗證**
+  （讀不回完整四張、或回讀結果和剛才的回答不同，都 `throw`）。走到那句話的三條路裡
+  有兩條是「確認不了就當成沒存」——那是同意書路徑刻意的 fail-closed。
+  在那裡補「乙」會把一條刻意 fail-closed 的路改鬆。
+- **`timeline.js::forget` 和 `save()` 同類**，catch 印的是例外自己的訊息，
+  沒有宣布任何一件沒查過的事。不用改。
+- 真的還在的兩支，**都低嚴重度**：`onboarding.js::set`（`consent_set` 成功、`paint` 丟例外
+  → catch 把勾勾寫回按之前的值，畫面和磁碟上的同意書相反）和 `app.js::markLine`
+  （寫死的「這一次標記沒記進去」）。
+
+沒有併進 a147：R7 已經有 6 支函式、11 條新斷言，再加同意書路徑會大到不好審，
+而且同意書那一支要配它自己的閘門，不是 `check-settings-say.mjs`。
+細節在 `/home/ted-h/tmp-tests/review-20260921/FINDINGS-R8.md`（本機，沒有進 repo）。
+
+### `docs/PHASES.md` 的缺口（要 Ted 決定，我沒有自己補）
+
+PHASES.md 裡**沒有** BreezyVoice 的條目，也沒有用量／LimitReset 看板的條目，而這兩個
+都已經在 alpha.146 出貨了。我沒有自己發明 roadmap 條目回填——那會變成拿我自己的稽核標準
+當專案方向。要補的話那是 Ted 的決定。
