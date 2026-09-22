@@ -455,7 +455,7 @@ painter 修好之後下一次重讀會收斂到真相）。第三條現在沒有
 | a146 的 274 條有沒有消失 | **0 條** |
 | 刀 J2：成功路徑的重畫搬回外層 `try` | 紅，**恰好 1 條**：`登入項寫入成功而重畫丟例外時，不再讀一次，說明也不標成失敗` |
 | 刀 L：painter 把 `disabled` 改成寫在 `textContent` **之後** | 紅，**3 條**，含兩條新的「沒有卡死」 |
-| `gates-all.sh` | **52 條全綠** |
+| `/home/ted-h/tmp-tests/gates-all.sh`（本機工具，不在 repo 裡） | **52 條全綠** |
 | 五顆主題 commit 逐顆 | 每一顆都 `cargo check --workspace --all-targets` 綠，動到 JS 的兩顆 gate 也綠 |
 
 **刀 L 是 grok 沒跑的那一刀，也是這一輪最重要的一刀。** 夾具丟在 `textContent`
