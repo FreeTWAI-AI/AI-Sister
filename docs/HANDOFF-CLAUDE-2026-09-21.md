@@ -656,3 +656,74 @@ C7 那三刀**要的就是綠**：它們證明「沒有任何一條斷言在要�
 - PF-3：`nodes[i]` / `elements[i]` 的平行陣列不變式跨過 `#[cfg(windows)]`，
   目前只有 `debug_assert_eq!` 守著。
 - `usage_status.rs` 的接線仍是 0 條測試。
+
+## 14. alpha.148 出貨收據（2026-09-22 早上）
+
+這一次的順序，和 §12.2 寫的那條紀律逐字對上：
+
+1. 六顆 commit 在 worktree 裡疊好（fix / test / refactor / docs ×2 / release）。
+2. 版號 bump 跑 `scripts/check-release-version.py`，19 個位置。四個手改，
+   **兩個 lock 讓 cargo 自己重寫**（`cargo metadata --offline`），
+   然後 `git diff -U0` 確認 lock 裡除了版號行沒有別的增刪。
+3. `docs/RELEASE-NOTES.md` 插進 `## v0.1.0-alpha.148`，寫出去不帶 BOM，
+   `scripts/release-notes.sh v0.1.0-alpha.148` 的輸出存起來當之後比對的底本。
+4. `git worktree add --detach <sha>` → 跑完整閘門。收據：
+   **量的是 …/wt-a148-verify @ `0f7ceeb`（樹 `7d3c506160969f27`），通過 52 條，失敗 0 條，全綠。**
+5. fast-forward main、push、等 main 的 CI 六個 job 全綠。
+6. 打 tag（message 從檔案 `-F` 餵進去，不是手抄的）、push tag。
+
+### 14.1　中途被擋下來一次，擋得對
+
+第 4 步之前跑過一次，對象是 `d421dae`。跑到一半我發現 release notes 的標題是
+假的（見 §14.2），於是**把那一輪的 log 改名成 `.aborted.log` 並殺掉它**——
+它量的是一顆即將被改掉的 commit，留著只會誘惑我引用。
+改完之後從頭跑一次，對象是 `0f7ceeb`。
+
+殺的方法也記一下：`fuser <log>` 拿到 PID 再點名殺，**不用 `pkill -f`**——
+那個會連發出指令的 shell 一起殺掉，我前一晚才踩過。
+
+### 14.2　差一點出貨的那句假話
+
+a148 的說明草稿，標題原本是：
+
+> 同一種謊，設定頁以外還有三處：同意書、答案底下那顆「我本來已經忘了」、匯出診斷。
+
+**匯出診斷就在設定頁上。** `apps/desktop/ui/settings.html` 裡有
+`[data-diagnose-say]`，也有 `data-platform-access-section`。四個修補點裡有兩個
+在設定頁上，不是「設定頁以外」。
+
+而且往回看一版，alpha.147 出貨的說明寫的是「設定頁上**其餘每一個**會寫東西的
+地方」——那句話當時就是假的，匯出診斷在同一頁上而且真的寫檔。
+
+病因是我用**檔案**在想頁面：`settings.js` 我當成「設定頁的程式」，
+`onboarding.js` / `app.js` 當成別頁的。但 handler 在哪個 `.js` 裡，跟那顆鈕畫在
+哪一頁上，是兩件事——要看哪個 `.html` `<script src>` 了它。
+
+改法是把標題改成照實數：兩個在設定頁以外，兩個就在設定頁上、只是上一版點名的
+清單沒有列到；並且在 a148 的說明裡**明講 a147 那句話不完全對**。
+
+順帶一個機械教訓：引用上一版出貨過的句子要逐字驗，而 `grep -c` 驗不了——
+那些檔是折行的，片語跨行時單行 grep 回 0 或 1 都在騙人。
+要 `s.replace("\n","")` 之後再 `count()`，而且對 `docs/RELEASE-NOTES.md` 和
+**真的送出去的那份 body** 各比一次。這一句兩邊都是 1 次，逐字相符。
+
+### 14.3　收據
+
+| 項目 | 值 |
+|---|---|
+| tag → commit | `0f7ceeb` |
+| 那顆 commit 的樹 | `2ea7bca28a9adec0565228fc5e70400d01c75a12`，和被閘門量過的那棵相同 |
+| main run | 六個 job 全 `success`（Release／Website 在 main 上 `skipped`，它們是 tag-gated） |
+| tag run | 八個 job 全 `success`，含 `Release` 與 `Website` |
+| `draft` / `prerelease` | `false` / `true` |
+| 資產 | 4 個，全部 `uploaded`、全部非空 |
+| `AI-Sister-Setup.exe` | 277,941,356 bytes |
+| `AI-Sister-Linux-X11-amd64.deb` | 65,487,666 bytes |
+| `sister-desktop.exe` | 71,817,216 bytes |
+| `sister.exe` | 11,161,600 bytes |
+| body | 與本機重算的輸出**前綴相符**，後面只多了 101 字的 `**Full Changelog**` |
+| 發布時間 | 2026-09-22T07:57:39Z |
+
+驗的腳本留在 `/home/ted-h/tmp-tests/review-20260922/verify-release-a148.sh`：
+對 gh 一律測 `= "success"`（它把還沒跑到的步驟回成 `""` 不是 `null`），
+body 比前綴不比相等。
