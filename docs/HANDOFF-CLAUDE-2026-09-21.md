@@ -736,7 +736,7 @@ body 比前綴不比相等。
 
 ### 15.1　我審出來、delegate 沒自己發現的
 
-1. **一句出貨的畫面文字變成假的。** `apps/desktop/ui/settings.html:86` 原本寫
+1. **一句出貨的畫面文字變成假的。** `apps/desktop/ui/settings.html` 第 86 行原本寫
    「只有你在當張按下才播放」。那句話在 a149 之前是真的，是 a149 讓它變假的。
    它就在 delegate 這一輪加 checkbox 的**同一個檔案裡，差 77 行**。
 
