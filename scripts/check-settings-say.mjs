@@ -2298,6 +2298,975 @@ console.log("㉚ᶠ Azure write 飛行中收到 changed event，完成後必須�
   check("補讀完成後控制恢復", p.node("[data-azure-enabled]").disabled === false);
 }
 
+function failAzurePaintThatClaimsNoRequest(stateEl) {
+  const original = Object.getOwnPropertyDescriptor(stateEl, "textContent");
+  Object.defineProperty(stateEl, "textContent", {
+    configurable: true,
+    get() {
+      return original.get.call(stateEl);
+    },
+    set(value) {
+      original.set.call(stateEl, value);
+      if (String(value).includes("沒有送出 request")) {
+        throw new Error("paintAzureTts threw inside refresh catch");
+      }
+    },
+  });
+}
+
+console.log("㉚ᵍ 金鑰保存或刪除失敗、而且重讀自己也丟例外時，不能改口成沒有送出 request");
+{
+  // Node 15+ 會把沒人接的 rejection 直接殺掉行程。重讀例外穿出 save/delete
+  // 時，要先讓這支測試讀到畫面上的那一句，再由斷言判紅。
+  const rejections = [];
+  const noteRejection = (reason) => {
+    rejections.push(reason);
+  };
+  process.on("unhandledRejection", noteRejection);
+  try {
+    const secret = "0123456789abcdef0123456789abcdef";
+    let failRead = false;
+    const saved = await open({
+      azure: { ...AZURE_READY, credential: "missing", ready: false },
+      onAzureRead: (state) => {
+        if (failRead) throw new Error("status read blew up");
+        return state;
+      },
+      onAzureKeySet: () => {
+        throw new Error("credential store refused");
+      },
+    });
+    failRead = true;
+    failAzurePaintThatClaimsNoRequest(saved.node("[data-azure-state]"));
+    saved.node("[data-azure-key]").value = secret;
+    await saved.act("[data-azure-key]", { event: "input" });
+    const clickedSave = await saved.act("[data-azure-key-save]");
+    await tick();
+    const saveText = saved.node("[data-azure-state]").textContent;
+    check(
+      "前提：金鑰保存鍵按得到且 request 有送出",
+      clickedSave === true && calls(saved, "azure_tts_key_set").length === 1,
+    );
+    check(
+      "存檔失敗而且重讀自己也丟例外時，最後一句是金鑰沒有保存",
+      saveText === "金鑰沒有保存：credential store refused" &&
+        !saveText.includes("沒有送出 request"),
+      saveText,
+    );
+
+    failRead = false;
+    const deleted = await open({
+      azure: AZURE_READY,
+      onAzureRead: (state) => {
+        if (failRead) throw new Error("status read blew up");
+        return state;
+      },
+      onAzureKeyDelete: () => {
+        throw new Error("credential delete refused");
+      },
+    });
+    failRead = true;
+    failAzurePaintThatClaimsNoRequest(deleted.node("[data-azure-state]"));
+    const clickedDelete = await deleted.act("[data-azure-key-delete]");
+    await tick();
+    const deleteText = deleted.node("[data-azure-state]").textContent;
+    check(
+      "前提：金鑰刪除鍵按得到且 request 有送出",
+      clickedDelete === true && calls(deleted, "azure_tts_key_delete").length === 1,
+    );
+    check(
+      "刪除失敗而且重讀自己也丟例外時，最後一句是金鑰沒有刪掉",
+      deleteText === "金鑰沒有刪掉：credential delete refused" &&
+        !deleteText.includes("沒有送出 request"),
+      deleteText,
+    );
+    check(
+      "這兩次重讀例外都留在函式裡",
+      rejections.length === 0,
+      rejections.map((reason) => String(reason?.message ?? reason)),
+    );
+  } finally {
+    process.off("unhandledRejection", noteRejection);
+  }
+}
+
+function failNextAzurePaintIncluding(stateEl, needle) {
+  const original = Object.getOwnPropertyDescriptor(stateEl, "textContent");
+  let thrown = false;
+  Object.defineProperty(stateEl, "textContent", {
+    configurable: true,
+    get() {
+      return original.get.call(stateEl);
+    },
+    set(value) {
+      // 命中的那一次先丟、不寫進畫面。成功句要是已經寫上去，
+      // 只斷言「不含失敗句」會在失敗句沒蓋掉時假綠。
+      if (!thrown && String(value).includes(needle)) {
+        thrown = true;
+        throw new Error("paintAzureTts threw on the success repaint");
+      }
+      original.set.call(stateEl, value);
+    },
+  });
+  return () => thrown;
+}
+
+console.log("㉚ʰ Azure 失敗路徑的重讀、與成功路徑的重畫，丟例外都不能改口");
+{
+  // Node 15+ 會把沒人接的 rejection 直接殺掉行程。重畫例外穿出這三支時，
+  // 要先讓這支測試讀到畫面，再由斷言判紅。
+  const rejections = [];
+  const noteRejection = (reason) => {
+    rejections.push(reason);
+  };
+  process.on("unhandledRejection", noteRejection);
+  try {
+    let failRead = false;
+    const configFailed = await open({
+      azure: AZURE_OFF,
+      onAzureRead: (state) => {
+        if (failRead) throw new Error("status read blew up");
+        return state;
+      },
+      onAzureConfigSet: () => {
+        throw new Error("config write refused");
+      },
+    });
+    failRead = true;
+    failAzurePaintThatClaimsNoRequest(configFailed.node("[data-azure-state]"));
+    const rejectionsBeforeConfigFail = rejections.length;
+    configFailed.node("[data-azure-enabled]").checked = true;
+    await configFailed.act("[data-azure-enabled]", { event: "change" });
+    await tick();
+    const configFailText = configFailed.node("[data-azure-state]").textContent;
+    check(
+      "開關保存失敗而且重讀自己也丟例外時，最後一句是沒有完整存好",
+      calls(configFailed, "azure_tts_config_set").length === 1 &&
+        configFailText === "Azure 開關、區域與聲音沒有完整存好：config write refused",
+      configFailText,
+    );
+    check(
+      "這次開關失敗路徑的重畫例外留在函式裡",
+      rejections.length === rejectionsBeforeConfigFail,
+      rejections.slice(rejectionsBeforeConfigFail).map((reason) => String(reason?.message ?? reason)),
+    );
+
+    const secret = "0123456789abcdef0123456789abcdef";
+    const savedSentence =
+      "四個條件都齊了。每份最新答案完成後會自動送出正文並播放一次；答案下方的 Azure 按鈕可停止或手動重播，重播會再送一次。關閉操作成功回覆後就不再開始新的自動朗讀。";
+    const saved = await open({
+      azure: { ...AZURE_READY, credential: "missing", ready: false },
+    });
+    saved.node("[data-azure-key]").value = secret;
+    await saved.act("[data-azure-key]", { event: "input" });
+    const seenSaveThrow = failNextAzurePaintIncluding(
+      saved.node("[data-azure-state]"),
+      "四個條件都齊了",
+    );
+    const rejectionsBeforeSave = rejections.length;
+    await saved.act("[data-azure-key-save]");
+    await tick();
+    const saveText = saved.node("[data-azure-state]").textContent;
+    check(
+      "存檔成功而成功路徑重畫丟例外時，不說金鑰沒有保存，並畫出已保存狀態",
+      seenSaveThrow() === true &&
+        calls(saved, "azure_tts_key_set").length === 1 &&
+        saveText === savedSentence &&
+        !saveText.includes("金鑰沒有保存"),
+      saveText,
+    );
+    check(
+      "這次存檔成功路徑的重畫例外留在函式裡",
+      rejections.length === rejectionsBeforeSave,
+      rejections.slice(rejectionsBeforeSave).map((reason) => String(reason?.message ?? reason)),
+    );
+
+    const deletedSentence =
+      "Azure 開關與區域已有設定，但 Windows Credential Manager 裡沒有金鑰；不會送出 request。";
+    const deleted = await open({ azure: AZURE_READY });
+    const seenDeleteThrow = failNextAzurePaintIncluding(
+      deleted.node("[data-azure-state]"),
+      "Windows Credential Manager 裡沒有金鑰",
+    );
+    const rejectionsBeforeDelete = rejections.length;
+    await deleted.act("[data-azure-key-delete]");
+    await tick();
+    const deleteText = deleted.node("[data-azure-state]").textContent;
+    check(
+      "刪除成功而成功路徑重畫丟例外時，不說金鑰沒有刪掉，並畫出已刪除狀態",
+      seenDeleteThrow() === true &&
+        calls(deleted, "azure_tts_key_delete").length === 1 &&
+        deleteText === deletedSentence &&
+        !deleteText.includes("金鑰沒有刪掉"),
+      deleteText,
+    );
+    check(
+      "這次刪除成功路徑的重畫例外留在函式裡",
+      rejections.length === rejectionsBeforeDelete,
+      rejections.slice(rejectionsBeforeDelete).map((reason) => String(reason?.message ?? reason)),
+    );
+
+    const openedSentence =
+      "Azure 開關已打開，但還沒選金鑰所屬區域；沒有可用 endpoint，也不會送出 request。";
+    const opened = await open({ azure: AZURE_OFF });
+    const seenOpenThrow = failNextAzurePaintIncluding(
+      opened.node("[data-azure-state]"),
+      "還沒選金鑰所屬區域",
+    );
+    const rejectionsBeforeOpen = rejections.length;
+    opened.node("[data-azure-enabled]").checked = true;
+    await opened.act("[data-azure-enabled]", { event: "change" });
+    await tick();
+    const openText = opened.node("[data-azure-state]").textContent;
+    check(
+      "開關保存成功而成功路徑重畫丟例外時，不說沒有完整存好，並畫出已打開但未選區域",
+      seenOpenThrow() === true &&
+        calls(opened, "azure_tts_config_set").length === 1 &&
+        openText === openedSentence &&
+        !openText.includes("Azure 開關、區域與聲音沒有完整存好"),
+      openText,
+    );
+    check(
+      "這次開關保存成功路徑的重畫例外留在函式裡",
+      rejections.length === rejectionsBeforeOpen,
+      rejections.slice(rejectionsBeforeOpen).map((reason) => String(reason?.message ?? reason)),
+    );
+  } finally {
+    process.off("unhandledRejection", noteRejection);
+  }
+}
+
+const ASSET_INSTALLED = {
+  phase: "installed",
+  disclosure: { ...ASSET_DISCLOSURE },
+  asset_file_bytes: 100000000,
+  portrait_count: 4,
+  voice_count: 8,
+};
+const ASSET_REPAIR = { ...ASSET_AVAILABLE, phase: "repair-needed" };
+const ASSET_INSTALLING = { ...ASSET_AVAILABLE, phase: "installing" };
+const INSTALLED_SUMMARY =
+  "已安裝並驗證 persona-pack-v1：4 張舊版立繪（桌面不採用）、8 句固定台詞錄音，素材檔合計 100,000,000 bytes（95.37 MiB）。";
+const AVAILABLE_SUMMARY =
+  "17 張內建角色圖已可使用；四姊妹的額外固定錄音尚未下載。記錄、搜尋、證據、刪除與匯出不受影響。";
+
+// 每次命中都丟。這三支 painter 是同步的（`await` 0 處、`invoke` 0 處），第一次丟
+// 到第二次之間沒有交錯點，真實的重畫失敗會每次丟在同一行。
+//
+// **這裡沒有「只丟一次」的選項，是故意的。** a147 R7 有過一版：產品在 catch 裡
+// 再呼叫一次同一支 painter「補畫」，而那段補畫只在「剛好只丟一次」的夾具底下會
+// 成功。拿掉補畫、和把夾具改成每次都丟，紅的是**同樣那五條**正面斷言——
+// 兩者是同一根槓桿。留一個沒有人用的 once 開關，就是把那扇門留著。
+function throwOnText(el, needle, { afterWrite = false, message = "repaint failed" } = {}) {
+  const original = Object.getOwnPropertyDescriptor(el, "textContent");
+  let thrown = false;
+  let armed = true;
+  Object.defineProperty(el, "textContent", {
+    configurable: true,
+    get() {
+      return original.get.call(el);
+    },
+    set(value) {
+      const text = String(value);
+      if (armed && text.includes(needle)) {
+        thrown = true;
+        if (afterWrite) original.set.call(el, value);
+        throw new Error(message);
+      }
+      original.set.call(el, value);
+    },
+  });
+  return {
+    seen: () => thrown,
+    disarm() {
+      armed = false;
+    },
+  };
+}
+
+function rejectionMessages(rejections, from) {
+  return rejections.slice(from).map((reason) => String(reason?.message ?? reason));
+}
+
+function failAfterFirstStatus(first) {
+  let reads = 0;
+  return () => {
+    reads += 1;
+    if (reads === 1) {
+      return {
+        ...first,
+        disclosure: first.disclosure ? { ...first.disclosure } : null,
+      };
+    }
+    throw new Error("status read blew up");
+  };
+}
+
+console.log("㉚ⁱ 素材操作失敗、重讀再丟時，失敗句仍要畫完");
+{
+  // Node 15+ 會把沒人接的 rejection 直接殺掉行程。重讀例外穿出這三支時，
+  // 要先讓這支測試讀到畫面，再由斷言判紅。
+  const rejections = [];
+  const noteRejection = (reason) => {
+    rejections.push(reason);
+  };
+  process.on("unhandledRejection", noteRejection);
+  try {
+    async function failAssetRefresh(page) {
+      const seen = throwOnText(
+        page.node("[data-persona-asset-error]"),
+        "問不到本機素材狀態",
+      );
+      return seen;
+    }
+
+    const available = await open({
+      asset: ASSET_AVAILABLE,
+      onAssetInstall: () => {
+        throw new Error("cdn refused");
+      },
+      onAssetStatus: failAfterFirstStatus(ASSET_AVAILABLE),
+    });
+    const seenAvailable = await failAssetRefresh(available);
+    const beforeAvailable = rejections.length;
+    const clickedDownload = await available.act("[data-persona-download]");
+    await tick();
+    const availableError = available.node("[data-persona-asset-error]").textContent;
+    check(
+      "前提：可下載時下載鍵按得到",
+      clickedDownload === true && calls(available, "persona_asset_install").length === 1,
+      { clickedDownload, invokes: available.invokes },
+    );
+    check(
+      "下載失敗而且重讀自己也丟例外時，最後一句是下載沒有完成",
+      seenAvailable.seen() === true &&
+        availableError === "下載沒有完成：cdn refused。17 張內建角色圖仍可使用。",
+      availableError,
+    );
+    check(
+      "這次下載失敗路徑的重讀例外留在函式裡",
+      rejections.length === beforeAvailable,
+      rejectionMessages(rejections, beforeAvailable),
+    );
+
+    const repair = await open({
+      asset: ASSET_REPAIR,
+      onAssetInstall: () => {
+        throw new Error("cdn refused");
+      },
+      onAssetStatus: failAfterFirstStatus(ASSET_REPAIR),
+    });
+    const seenRepair = await failAssetRefresh(repair);
+    const beforeRepair = rejections.length;
+    const clickedRepair = await repair.act("[data-persona-repair]");
+    await tick();
+    const repairError = repair.node("[data-persona-asset-error]").textContent;
+    check(
+      "前提：待修復時修復鍵按得到",
+      clickedRepair === true && calls(repair, "persona_asset_install").length === 1,
+      { clickedRepair, invokes: repair.invokes },
+    );
+    check(
+      "修復失敗而且重讀自己也丟例外時，最後一句是修復沒有完成",
+      seenRepair.seen() === true &&
+        repairError === "修復沒有完成：cdn refused。17 張內建角色圖仍可使用。",
+      repairError,
+    );
+    check(
+      "這次修復失敗路徑的重讀例外留在函式裡",
+      rejections.length === beforeRepair,
+      rejectionMessages(rejections, beforeRepair),
+    );
+
+    const cancelling = await open({
+      asset: ASSET_INSTALLING,
+      onAssetCancel: () => {
+        throw new Error("cancel refused");
+      },
+      onAssetStatus: failAfterFirstStatus(ASSET_INSTALLING),
+    });
+    const seenCancel = await failAssetRefresh(cancelling);
+    const beforeCancel = rejections.length;
+    const clickedCancel = await cancelling.act("[data-persona-cancel]");
+    await tick();
+    const cancelError = cancelling.node("[data-persona-asset-error]").textContent;
+    check(
+      "前提：下載中取消鍵按得到",
+      clickedCancel === true && calls(cancelling, "persona_asset_cancel").length === 1,
+      { clickedCancel, invokes: cancelling.invokes },
+    );
+    check(
+      "取消失敗而且重讀自己也丟例外時，最後一句是取消失敗",
+      seenCancel.seen() === true &&
+        cancelError === "取消失敗：cancel refused。下載狀態沒有被假裝成已停止。",
+      cancelError,
+    );
+    check(
+      "這次取消失敗路徑的重讀例外留在函式裡",
+      rejections.length === beforeCancel,
+      rejectionMessages(rejections, beforeCancel),
+    );
+
+    const removing = await open({
+      asset: ASSET_INSTALLED,
+      onAssetRemove: () => {
+        throw new Error("remove refused");
+      },
+      onAssetStatus: failAfterFirstStatus(ASSET_INSTALLED),
+    });
+    const seenRemove = await failAssetRefresh(removing);
+    const beforeRemove = rejections.length;
+    const clickedRemove = await removing.act("[data-persona-remove]");
+    await tick();
+    const removeError = removing.node("[data-persona-asset-error]").textContent;
+    check(
+      "前提：已安裝時刪除鍵按得到",
+      clickedRemove === true && calls(removing, "persona_asset_remove").length === 1,
+      { clickedRemove, invokes: removing.invokes },
+    );
+    check(
+      "刪除失敗而且重讀自己也丟例外時，最後一句是刪除結果無法確認",
+      seenRemove.seen() === true &&
+        removeError === "刪除結果無法確認：remove refused。重新開啟設定再查一次本機狀態。",
+      removeError,
+    );
+    check(
+      "這次刪除失敗路徑的重讀例外留在函式裡",
+      rejections.length === beforeRemove,
+      rejectionMessages(rejections, beforeRemove),
+    );
+  } finally {
+    process.off("unhandledRejection", noteRejection);
+  }
+}
+
+console.log("㉚ʲ 素材操作已經成功時，重畫丟例外不改口成沒有完成");
+{
+  const rejections = [];
+  const noteRejection = (reason) => {
+    rejections.push(reason);
+  };
+  process.on("unhandledRejection", noteRejection);
+  try {
+    function escapeAfterStatusPaint(page, summaryNeedle) {
+      const seenSummary = throwOnText(page.node("[data-persona-asset-summary]"), summaryNeedle, {
+        afterWrite: true,
+      });
+      const seenRefresh = throwOnText(
+        page.node("[data-persona-asset-error]"),
+        "問不到本機素材狀態",
+      );
+      return () => seenSummary.seen() && seenRefresh.seen();
+    }
+
+    const installed = await open({ asset: ASSET_AVAILABLE });
+    const seenInstall = escapeAfterStatusPaint(installed, "已安裝並驗證");
+    const beforeInstall = rejections.length;
+    const clickedInstall = await installed.act("[data-persona-download]");
+    await tick();
+    const installSummary = installed.node("[data-persona-asset-summary]").textContent;
+    const installError = installed.node("[data-persona-asset-error]").textContent;
+    check("前提：下載鍵按得到且安裝 request 有送出", clickedInstall === true && seenInstall() === true);
+    check(
+      "下載成功而重畫丟例外時，畫面上是已安裝那一句",
+      installSummary === INSTALLED_SUMMARY,
+      installSummary,
+    );
+    check(
+      "下載成功而重畫丟例外時，不說下載沒有完成",
+      !installError.includes("下載沒有完成"),
+      installError,
+    );
+    check(
+      "這次下載成功路徑的重畫例外留在函式裡",
+      rejections.length === beforeInstall,
+      rejectionMessages(rejections, beforeInstall),
+    );
+
+    // 成功路徑的第一次重讀畫出 available，接著在 refresh 的 catch 裡再丟。
+    // 沒有乙的時候外層會再讀一次；第三次故意回 unavailable，三臂才落到「刪除結果無法確認」。
+    // 回 available 的話會落到另一臂，這兩句否定都打不中。
+    let removeStatusReads = 0;
+    const removedToAvailable = await open({
+      asset: ASSET_INSTALLED,
+      onAssetRemove: (_state, store) => {
+        store({ ...ASSET_AVAILABLE, disclosure: { ...ASSET_DISCLOSURE } });
+      },
+      onAssetStatus: () => {
+        removeStatusReads += 1;
+        if (removeStatusReads === 1) {
+          return { ...ASSET_INSTALLED, disclosure: { ...ASSET_DISCLOSURE } };
+        }
+        if (removeStatusReads === 2) {
+          return { ...ASSET_AVAILABLE, disclosure: { ...ASSET_DISCLOSURE } };
+        }
+        return {
+          phase: "unavailable",
+          disclosure: null,
+          asset_file_bytes: null,
+          portrait_count: null,
+          voice_count: null,
+        };
+      },
+    });
+    const seenRemoveUnknown = escapeAfterStatusPaint(removedToAvailable, AVAILABLE_SUMMARY);
+    const beforeRemoveUnknown = rejections.length;
+    const clickedRemoveUnknown = await removedToAvailable.act("[data-persona-remove]");
+    await tick();
+    const removeUnknownSummary = removedToAvailable.node("[data-persona-asset-summary]").textContent;
+    const removeUnknownError = removedToAvailable.node("[data-persona-asset-error]").textContent;
+    check(
+      "前提：刪除後重讀會畫出可用狀態，而且重畫例外有穿出",
+      clickedRemoveUnknown === true && seenRemoveUnknown() === true,
+    );
+    check(
+      "刪除成功而重畫丟例外時，畫面上是後端回報的可用狀態",
+      removeUnknownSummary === AVAILABLE_SUMMARY,
+      removeUnknownSummary,
+    );
+    check(
+      "刪除成功而重畫丟例外時，不說刪除結果無法確認",
+      !removeUnknownError.includes("刪除結果無法確認"),
+      removeUnknownError,
+    );
+    check(
+      "刪除成功而重畫丟例外時，不說刪除沒有完成",
+      !removeUnknownError.includes("刪除沒有完成"),
+      removeUnknownError,
+    );
+    check(
+      "這次刪除成功、狀態被重讀蓋掉的重畫例外留在函式裡",
+      rejections.length === beforeRemoveUnknown,
+      rejectionMessages(rejections, beforeRemoveUnknown),
+    );
+
+    // 上面那條重讀的 catch 會先把狀態改成 null，失敗句只會落到「無法確認」。
+    // 這一條讓狀態停在 installed，重畫例外從語音那一側穿出，失敗句才會是「刪除沒有完成」。
+    let armVoiceFailure = false;
+    let voiceReadFails = false;
+    const removedStaysInstalled = await open({
+      asset: ASSET_INSTALLED,
+      onAssetRemove: (_state, store) => {
+        store({ ...ASSET_INSTALLED, disclosure: { ...ASSET_DISCLOSURE } });
+      },
+      onAssetStatus: (state) => {
+        if (armVoiceFailure) voiceReadFails = true;
+        return {
+          ...state,
+          disclosure: state.disclosure ? { ...state.disclosure } : null,
+        };
+      },
+      onPersonaRead: (enabled) => {
+        if (voiceReadFails) throw new Error("persona read blew up");
+        return { id: "chatgpt", voice_enabled: enabled };
+      },
+    });
+    const seenVoice = throwOnText(
+      removedStaysInstalled.node("[data-persona-voice-state]"),
+      "正在讀本機聲音設定",
+    );
+    armVoiceFailure = true;
+    const beforeRemoveInstalled = rejections.length;
+    const clickedRemoveInstalled = await removedStaysInstalled.act("[data-persona-remove]");
+    await tick();
+    const removeInstalledSummary = removedStaysInstalled.node("[data-persona-asset-summary]").textContent;
+    const removeInstalledError = removedStaysInstalled.node("[data-persona-asset-error]").textContent;
+    check(
+      "前提：刪除後狀態仍是已安裝，而且語音重畫例外有穿出",
+      clickedRemoveInstalled === true &&
+        seenVoice.seen() === true &&
+        calls(removedStaysInstalled, "persona_asset_remove").length === 1,
+    );
+    check(
+      "刪除成功、狀態仍是已安裝而重畫丟例外時，畫面上是已安裝那一句",
+      removeInstalledSummary === INSTALLED_SUMMARY,
+      removeInstalledSummary,
+    );
+    check(
+      "刪除成功、狀態仍是已安裝而重畫丟例外時，不說刪除沒有完成",
+      !removeInstalledError.includes("刪除沒有完成"),
+      removeInstalledError,
+    );
+    check(
+      "刪除成功、狀態仍是已安裝而重畫丟例外時，不說刪除結果無法確認",
+      !removeInstalledError.includes("刪除結果無法確認"),
+      removeInstalledError,
+    );
+    check(
+      "這次刪除成功、狀態仍是已安裝的重畫例外留在函式裡",
+      rejections.length === beforeRemoveInstalled,
+      rejectionMessages(rejections, beforeRemoveInstalled),
+    );
+
+    const cancelled = await open({ asset: ASSET_INSTALLING });
+    const seenCancel = escapeAfterStatusPaint(cancelled, AVAILABLE_SUMMARY);
+    const beforeCancel = rejections.length;
+    const clickedCancel = await cancelled.act("[data-persona-cancel]");
+    await tick();
+    const cancelSummary = cancelled.node("[data-persona-asset-summary]").textContent;
+    const cancelError = cancelled.node("[data-persona-asset-error]").textContent;
+    check(
+      "前提：取消鍵按得到且重畫例外有穿出",
+      clickedCancel === true && seenCancel() === true && calls(cancelled, "persona_asset_cancel").length === 1,
+    );
+    check(
+      "取消成功而重畫丟例外時，畫面上是後端回報的可用狀態",
+      cancelSummary === AVAILABLE_SUMMARY,
+      cancelSummary,
+    );
+    check(
+      "取消成功而重畫丟例外時，不說取消失敗",
+      !cancelError.includes("取消失敗"),
+      cancelError,
+    );
+    check(
+      "這次取消成功路徑的重畫例外留在函式裡",
+      rejections.length === beforeCancel,
+      rejectionMessages(rejections, beforeCancel),
+    );
+  } finally {
+    process.off("unhandledRejection", noteRejection);
+  }
+}
+
+console.log("㉚ᵏ 登入項讀回成功後，重畫丟例外不能說成讀不回");
+{
+  const rejections = [];
+  const noteRejection = (reason) => {
+    rejections.push(reason);
+  };
+  process.on("unhandledRejection", noteRejection);
+  try {
+    let reads = 0;
+    const page = await open({
+      onLoginStartupRead: () => {
+        reads += 1;
+        if (reads === 1) return { ...LOGIN_STARTUP };
+        return {
+          state: "enabled",
+          expected: LOGIN_STARTUP_EXPECTED,
+          actual: LOGIN_STARTUP_EXPECTED,
+          reason: null,
+        };
+      },
+      onLoginStartupSet: () => {
+        throw new Error("set refused");
+      },
+    });
+    const seen = throwOnText(page.node("[data-login-startup-say]"), "已登錄");
+    const before = rejections.length;
+    const clicked = await page.changeLoginStartup(true);
+    await tick();
+    const say = page.loginStartupSay();
+    const box = page.node("[data-login-startup]");
+    check("前提：登入項寫入有送出且重畫丟了一次", clicked === true && seen.seen() === true && reads === 2, {
+      clicked,
+      reads,
+      say,
+    });
+    check("這時不說變更後也讀不回", !say.includes("變更後也讀不回"), say);
+    check(
+      "勾勾是已登錄那一態，不是未知態",
+      box.checked === true && box.disabled === false && box.indeterminate === false,
+      { checked: box.checked, disabled: box.disabled, indeterminate: box.indeterminate, say },
+    );
+    check(
+      "這次登入項重畫例外留在函式裡",
+      rejections.length === before,
+      rejectionMessages(rejections, before),
+    );
+    const disabledNow = box.disabled;
+    const checkedNow = box.checked;
+    seen.disarm();
+    const readsBeforeReload = calls(page, "login_startup_read").length;
+    const reloaded = await page.reload();
+    const again = page.loginStartupSay();
+    const boxAfter = page.node("[data-login-startup]");
+    check(
+      "讀回 enabled 之後重畫丟例外，勾勾沒有卡死，重讀後是已登錄",
+      disabledNow === false &&
+        checkedNow === true &&
+        reloaded === true &&
+        calls(page, "login_startup_read").length === readsBeforeReload + 1 &&
+        again.includes("已登錄：Windows 登入項精確符合這一版預期的命令。") &&
+        !again.includes("變更後也讀不回") &&
+        boxAfter.checked === true &&
+        boxAfter.disabled === false &&
+        boxAfter.indeterminate === false,
+      {
+        say,
+        again,
+        disabledNow,
+        checkedNow,
+        after: {
+          checked: boxAfter.checked,
+          disabled: boxAfter.disabled,
+          indeterminate: boxAfter.indeterminate,
+        },
+      },
+    );
+  } finally {
+    process.off("unhandledRejection", noteRejection);
+  }
+}
+
+console.log("㉚ᵏ² 登入項寫入成功後，重畫丟例外不能說成變更失敗");
+{
+  const rejections = [];
+  const noteRejection = (reason) => {
+    rejections.push(reason);
+  };
+  process.on("unhandledRejection", noteRejection);
+  try {
+    const page = await open();
+    const readsBefore = calls(page, "login_startup_read").length;
+    const seen = throwOnText(page.node("[data-login-startup-say]"), "已登錄");
+    const before = rejections.length;
+    const clicked = await page.changeLoginStartup(true);
+    await tick();
+    const say = page.loginStartupSay();
+    const sayEl = page.node("[data-login-startup-say]");
+    const box = page.node("[data-login-startup]");
+    check(
+      "前提：登入項寫入成功且重畫有丟",
+      clicked === true && seen.seen() === true && calls(page, "login_startup_set").length === 1,
+      { clicked, say, reads: calls(page, "login_startup_read").length },
+    );
+    check(
+      "登入項寫入成功而重畫丟例外時，不再讀一次，說明也不標成失敗",
+      !say.includes("變更 Windows 登入項失敗") &&
+        sayEl.classList.contains("bad") === false &&
+        calls(page, "login_startup_read").length === readsBefore,
+      {
+        say,
+        bad: sayEl.classList.contains("bad"),
+        reads: calls(page, "login_startup_read").length,
+        readsBefore,
+      },
+    );
+    check(
+      "這次登入項成功路徑的重畫例外留在函式裡",
+      rejections.length === before,
+      rejectionMessages(rejections, before),
+    );
+    const disabledNow = box.disabled;
+    seen.disarm();
+    const readsAtReload = calls(page, "login_startup_read").length;
+    const reloaded = await page.reload();
+    const again = page.loginStartupSay();
+    const boxAfter = page.node("[data-login-startup]");
+    check(
+      "登入項成功路徑重畫丟例外後沒有卡死，重讀回到已登錄",
+      disabledNow === false &&
+        reloaded === true &&
+        calls(page, "login_startup_read").length === readsAtReload + 1 &&
+        again.includes("已登錄：Windows 登入項精確符合這一版預期的命令。") &&
+        !again.includes("變更 Windows 登入項失敗") &&
+        boxAfter.checked === true &&
+        boxAfter.disabled === false &&
+        boxAfter.indeterminate === false,
+      {
+        disabledNow,
+        again,
+        checked: boxAfter.checked,
+        disabled: boxAfter.disabled,
+        indeterminate: boxAfter.indeterminate,
+      },
+    );
+  } finally {
+    process.off("unhandledRejection", noteRejection);
+  }
+}
+
+console.log("㉚ˡ 用量與角色聲音存好後，重畫丟例外不改口");
+{
+  const rejections = [];
+  const noteRejection = (reason) => {
+    rejections.push(reason);
+  };
+  process.on("unhandledRejection", noteRejection);
+  try {
+    const usage = await open();
+    const seenUsage = throwOnText(usage.node("[data-usage-state]"), "公開看板已開啟，還沒查過。");
+    const beforeUsage = rejections.length;
+    usage.node("[data-usage-public-enabled]").checked = true;
+    const clickedUsage = await usage.act("[data-usage-public-enabled]", { event: "change" });
+    await tick();
+    const usageText = usage.node("[data-usage-state]").textContent;
+    check(
+      "前提：用量設定有送出且重畫丟了一次",
+      clickedUsage === true &&
+        seenUsage.seen() === true &&
+        calls(usage, "usage_public_status_set").length === 1,
+    );
+    check("用量重畫之後畫面上有字", usageText.length > 0, usageText);
+    const usageRefreshNow = usage.node("[data-usage-refresh]").disabled;
+    const usagePublicNow = usage.node("[data-usage-public-enabled]").checked;
+    seenUsage.disarm();
+    const usageReadsBefore = calls(usage, "usage_status_read").length;
+    const usageReloaded = await usage.reload();
+    const usageAgain = usage.node("[data-usage-state]").textContent;
+    const usageRefreshAfter = usage.node("[data-usage-refresh]").disabled;
+    const usagePublicAfter = usage.node("[data-usage-public-enabled]").checked;
+    check(
+      "用量重畫丟例外後沒有卡死，重讀後是已開啟、還沒查過",
+      usageRefreshNow === false &&
+        usagePublicNow === true &&
+        usageReloaded === true &&
+        calls(usage, "usage_status_read").length === usageReadsBefore + 1 &&
+        usageAgain.includes("公開看板已開啟，還沒查過。") &&
+        !usageAgain.includes("用量設定沒有存好") &&
+        usageRefreshAfter === false &&
+        usagePublicAfter === true,
+      { usageText, usageAgain, usageRefreshNow, usageRefreshAfter, usagePublicNow, usagePublicAfter },
+    );
+    check("用量重畫之後不說沒有存好", !usageText.includes("用量設定沒有存好"), usageText);
+    check(
+      "這次用量重畫例外留在函式裡",
+      rejections.length === beforeUsage,
+      rejectionMessages(rejections, beforeUsage),
+    );
+
+    const voice = await open({ asset: ASSET_INSTALLED });
+    const seenVoice = throwOnText(voice.node("[data-persona-voice-state]"), "本機角色聲音已開啟。");
+    const beforeVoice = rejections.length;
+    voice.node("[data-persona-voice]").checked = true;
+    const clickedVoice = await voice.act("[data-persona-voice]", { event: "change" });
+    await tick();
+    const voiceBox = voice.node("[data-persona-voice]");
+    const voiceText = voice.node("[data-persona-voice-state]").textContent;
+    check(
+      "前提：角色聲音有送出且重畫丟了一次",
+      clickedVoice === true && seenVoice.seen() === true && calls(voice, "persona_voice_set").length === 1,
+    );
+    check(
+      "角色聲音重畫丟例外後，勾勾沒有留在停用",
+      voiceBox.disabled === false && voiceBox.checked === true,
+      { checked: voiceBox.checked, disabled: voiceBox.disabled, voiceText },
+    );
+    check("角色聲音重畫之後不說沒有改", !voiceText.includes("語音設定沒有改"), voiceText);
+    const voiceCheckedNow = voiceBox.checked;
+    seenVoice.disarm();
+    const voiceReadsBefore = calls(voice, "persona_read").length;
+    const voiceReloaded = await voice.reload();
+    const voiceAgain = voice.node("[data-persona-voice-state]").textContent;
+    const voiceAfter = voice.node("[data-persona-voice]");
+    check(
+      "勾勾是開的，畫面沒有說沒有改，重讀後句子和勾勾一致",
+      voiceCheckedNow === true &&
+        !voiceText.includes("語音設定沒有改") &&
+        voiceReloaded === true &&
+        calls(voice, "persona_read").length === voiceReadsBefore + 1 &&
+        voiceAgain === "本機角色聲音已開啟。" &&
+        voiceAfter.checked === true &&
+        voiceAfter.disabled === false &&
+        !voiceAgain.includes("語音設定沒有改"),
+      {
+        voiceCheckedNow,
+        voiceText,
+        voiceAgain,
+        afterChecked: voiceAfter.checked,
+        afterDisabled: voiceAfter.disabled,
+      },
+    );
+    check(
+      "這次角色聲音重畫例外留在函式裡",
+      rejections.length === beforeVoice,
+      rejectionMessages(rejections, beforeVoice),
+    );
+
+    const unknown = await open({
+      asset: ASSET_INSTALLED,
+      onVoiceSet: () => ({}),
+    });
+    const seenUnknown = throwOnText(
+      unknown.node("[data-persona-voice-state]"),
+      "無法確認是否已改",
+    );
+    const beforeUnknown = rejections.length;
+    unknown.node("[data-persona-voice]").checked = true;
+    const clickedUnknown = await unknown.act("[data-persona-voice]", { event: "change" });
+    await tick();
+    const unknownText = unknown.node("[data-persona-voice-state]").textContent;
+    check(
+      "前提：缺少開關的那一臂有走到且重畫丟了一次",
+      clickedUnknown === true && seenUnknown.seen() === true && calls(unknown, "persona_voice_set").length === 1,
+    );
+    seenUnknown.disarm();
+    const unknownReadsBefore = calls(unknown, "persona_read").length;
+    const unknownReloaded = await unknown.reload();
+    const unknownAgain = unknown.node("[data-persona-voice-state]").textContent;
+    const unknownAfter = unknown.node("[data-persona-voice]");
+    check(
+      "無法確認那一臂重畫丟例外後沒有卡死，重讀後句子和勾勾一致",
+      !unknownText.includes("語音設定沒有改") &&
+        unknownReloaded === true &&
+        calls(unknown, "persona_read").length === unknownReadsBefore + 1 &&
+        unknownAfter.disabled === false &&
+        unknownAfter.checked === false &&
+        unknownAgain === "本機聲音目前關閉。" &&
+        !unknownAgain.includes("語音設定沒有改"),
+      {
+        unknownText,
+        unknownAgain,
+        afterChecked: unknownAfter.checked,
+        afterDisabled: unknownAfter.disabled,
+      },
+    );
+    check(
+      "無法確認那一臂重畫丟例外後，不改口成語音設定沒有改",
+      !unknownText.includes("語音設定沒有改"),
+      unknownText,
+    );
+    check(
+      "這次無法確認重畫例外留在函式裡",
+      rejections.length === beforeUnknown,
+      rejectionMessages(rejections, beforeUnknown),
+    );
+  } finally {
+    process.off("unhandledRejection", noteRejection);
+  }
+}
+
+console.log("㉚ᵐ 熱鍵設定成功後，重畫丟例外不能把選單寫回舊組合");
+{
+  const rejections = [];
+  const noteRejection = (reason) => {
+    rejections.push(reason);
+  };
+  process.on("unhandledRejection", noteRejection);
+  try {
+    const page = await open();
+    const seen = throwOnText(page.node("[data-hotkey-say]"), "Ctrl + Alt + S");
+    const stateReadsBefore = calls(page, "hotkey_state").length;
+    const before = rejections.length;
+    await page.pressCombo({ key: "s", code: "KeyS", ctrlKey: true, altKey: true });
+    await tick();
+    check(
+      "前提：hotkey_set 有送出且重畫丟了一次",
+      seen.seen() === true && calls(page, "hotkey_set").length === 1,
+      { combo: page.combo(), say: page.hotkeySay() },
+    );
+    check(
+      "hotkey_set 成功而重畫丟例外時，選單是新組合",
+      page.combo() === "Ctrl + Alt + S",
+      page.combo(),
+    );
+    check(
+      "成功路徑沒有再讀 hotkey_state，也就沒有走到 restoreCombo",
+      calls(page, "hotkey_state").length === stateReadsBefore,
+      calls(page, "hotkey_state").length,
+    );
+    check(
+      "這次熱鍵重畫例外留在函式裡",
+      rejections.length === before,
+      rejectionMessages(rejections, before),
+    );
+  } finally {
+    process.off("unhandledRejection", noteRejection);
+  }
+}
+
 console.log("㉛ 能力報告的 Unknown 不會被畫成可用或不可用");
 {
   const available = await open();
