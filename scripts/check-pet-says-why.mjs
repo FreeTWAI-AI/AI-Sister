@@ -21,6 +21,7 @@
  * `setPaused` → `paint()`），和輪詢走的是同一條，只是不必真的等五秒。
  */
 
+import { runInNewContext } from "node:vm";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { domOf, fakeDocument, hiddenIn, loader, read, watchNonsense } from "./fake-dom.mjs";
@@ -352,6 +353,8 @@ async function open(
     search = "",
     beforeListenerRegistered = null,
     browserOnly = false,
+    autoFirstPersona = true,
+    alterCatalog = null,
     consentVoices = null,
     systemVoices = null,
     holdPlay = false,
@@ -369,6 +372,7 @@ async function open(
   let audioPlays = 0;
   let audioPauses = 0;
   let localSpeaks = 0;
+  const localSpeechTexts = [];
   const playbackTrace = [];
 
   // fake-dom 的 selector 子集刻意很小；這一頁新增的 Azure allowlist 是 attribute
@@ -454,7 +458,8 @@ async function open(
     getVoices: () => systemVoices ?? [],
     addEventListener() {},
     cancel() {},
-    speak() {
+    speak(utterance) {
+      localSpeechTexts.push(utterance.text);
       localSpeaks += 1;
     },
   };
@@ -505,6 +510,10 @@ async function open(
             ? supervisor()
             : cmd === "master_stop_state"
               ? "clear"
+              : cmd === "persona_select"
+                ? { ...(table.persona_read ?? { id: "chatgpt" }), id: arg.id }
+              : cmd === "persona_consent_speak_set"
+                ? { id: "chatgpt", consent_read_aloud: arg.enabled }
               : cmd === "consent_read"
                 ? consentView()
               : cmd === "master_stop_presentation_begin"
@@ -526,9 +535,15 @@ async function open(
   if (browserOnly) delete globalThis.__TAURI__;
   else globalThis.__TAURI__ = tauri;
 
+  await loader(read(join(UI, "personas/catalog.js")))();
+  if (alterCatalog) globalThis.__AI_SISTER_PERSONA_CATALOG__ = alterCatalog(globalThis.__AI_SISTER_PERSONA_CATALOG__);
   const nonsense = watchNonsense();
   await boot();
   await tick();
+  if (autoFirstPersona && !node("[data-persona-first-run]").hidden) {
+    for (const fn of node("[data-persona-first-save]").handlers.click ?? []) fn({ isTrusted: true });
+    await tick();
+  }
   return {
     node,
     calls,
@@ -549,7 +564,7 @@ async function open(
     consentProgress: () => node("[data-consent-progress]").textContent,
     consentWording: () => node("[data-consent-wording]").textContent,
     consentResult: () => node("[data-consent-result]").textContent,
-    consentListen: () => node("[data-consent-listen]"),
+    consentListen: () => node("[data-consent-speak]"),
     input: () => node("[data-ask-input]"),
     azureButton: () => node("[data-hits]").querySelector(".answer-cloud"),
     // Azure 那顆的 class 是 `answer-read answer-cloud`，所以 `.answer-read`
@@ -585,6 +600,7 @@ async function open(
       await tick();
     },
     localSpeaks: () => localSpeaks,
+    localSpeechTexts: () => [...localSpeechTexts],
     urlPolicy: () => node("[data-url-policy]"),
     urlPolicyQuestion: () => node("[data-url-policy-question]").textContent,
     urlPolicyActions: () => node("[data-url-policy-actions]"),
@@ -650,6 +666,105 @@ function check(name, ok, detail) {
     if (detail !== undefined) console.log(`      實際：${JSON.stringify(detail)}`);
   }
 }
+
+console.log("A149. 首次選角、同意按鈕、保存的朗讀開關");
+{
+  const fresh = () => consentView([false, false, false, false], [false, false, false, false]);
+  const first = await open({ consent_read: fresh(), persona_select: new Error("disk full") }, { autoFirstPersona: false });
+  check("A149 首次只顯示選角、不顯示同意書", !first.node("[data-persona-first-run]").hidden && first.consentGuide().hidden);
+  check("A149 選角使用共享 catalog 的全部頭像與名字", first.node("[data-first-persona-choices]").children.length === 17 &&
+    first.node("[data-first-persona-choices]").children.every((button, i) => button.children[0].src === globalThis.__AI_SISTER_PERSONA_CATALOG__.personas[i].portrait && button.children[1].textContent === globalThis.__AI_SISTER_PERSONA_CATALOG__.personas[i].alias));
+  await first.clickElement(first.node("[data-persona-first-save]"));
+  check("A149 選角保存失敗留在原頁且能重按", !first.node("[data-persona-first-run]").hidden && first.consentGuide().hidden && !first.node("[data-persona-first-save]").disabled && first.node("[data-persona-first-result]").textContent.includes("disk full"));
+  await first.clickElement(first.node("[data-persona-first-save]"));
+  check("A149 選角失敗重按真的再次寫入", first.invokes.filter(({cmd}) => cmd === "persona_select").length === 2);
+  const selected = await open({ consent_read: fresh() }, { autoFirstPersona: false });
+  await selected.clickElement(selected.node("[data-first-persona-choices]").children[1]);
+  await selected.clickElement(selected.node("[data-persona-first-save]"));
+  check("A149 就她保存所點角色後才顯示同意書", selected.invokes.some(({cmd,arg}) => cmd === "persona_select" && arg.id === "claude") && selected.node("[data-persona-first-run]").hidden && !selected.consentGuide().hidden);
+  for (const [label, alterCatalog] of [
+    ["missing", () => null],
+    ["schema", (catalog) => ({ ...catalog, schema: "wrong" })],
+    ["count", (catalog) => ({ ...catalog, personas: catalog.personas.slice(1) })],
+    ["portrait", (catalog) => ({ ...catalog, personas: catalog.personas.map((p, i) => i ? p : { ...p, portrait: "wrong.webp" }) })],
+  ]) {
+    const next = fresh(); next.sheets[0].reviewed = true;
+    const fallback = await open({ consent_read: fresh(), consent_set: next }, { autoFirstPersona: false, alterCatalog });
+    check(`A149 catalog ${label} 失效跳過選角、預設角色可回答第一張`, fallback.node("[data-persona-first-run]").hidden && !fallback.consentGuide().hidden && !fallback.input().disabled && fallback.consentProgress().includes("1 / 4") && fallback.node("[data-avatar]").dataset.persona === "chatgpt" && !fallback.calls.includes("persona_select"));
+    await fallback.type("不同意");
+    check(`A149 catalog ${label} 失效仍能保存回答並走到第二張`, fallback.invokes.some(({cmd,arg}) => cmd === "consent_set" && arg.granted === false) && fallback.consentProgress().includes("2 / 4"));
+  }
+  const wrongId = await open({ consent_read: fresh(), persona_select: { id: "gemini" } }, { autoFirstPersona: false });
+  await wrongId.clickElement(wrongId.node("[data-persona-first-save]"));
+  check("A149 回傳別人角色留在選角並說明沒有讀回所選角色", !wrongId.node("[data-persona-first-run]").hidden && wrongId.consentGuide().hidden && !wrongId.node("[data-persona-first-save]").disabled && wrongId.node("[data-persona-first-result]").textContent.includes("沒有讀回所選角色") && wrongId.node("[data-avatar]").dataset.persona === "chatgpt");
+  // 第一層 ID 相等之後，第二層 applyPersona 只會對未知 ID 回 false。
+  // JSON 的穩定 ID 無法獨立走到這條；用 getter 做 seam 故障注入，不冒充 native JSON。
+  let idReads = 0;
+  const rejectedView = { get id() { return ++idReads === 1 ? "chatgpt" : "unknown-persona"; } };
+  const unapplied = await open({ consent_read: fresh(), persona_select: rejectedView }, { autoFirstPersona: false });
+  await unapplied.clickElement(unapplied.node("[data-persona-first-save]"));
+  check("A149 回傳角色無法套用留在選角並說明沒有讀回所選角色", !unapplied.node("[data-persona-first-run]").hidden && unapplied.consentGuide().hidden && !unapplied.node("[data-persona-first-save]").disabled && unapplied.node("[data-persona-first-result]").textContent.includes("沒有讀回所選角色"));
+  const returning = await open({ consent_read: consentView([true,false,false,false], [false,false,false,false]) }, { autoFirstPersona: false });
+  check("A149 已回答過的人不再選角", returning.node("[data-persona-first-run]").hidden && !returning.consentGuide().hidden && !returning.calls.includes("persona_select"));
+  for (const granted of [true, false]) {
+    const answerView = fresh();
+    answerView.sheets[0] = { ...answerView.sheets[0], reviewed: true, effective: granted, granted_at: granted ? 123 : null };
+    const typed = await open({ consent_read: fresh(), consent_set: answerView });
+    await typed.type(granted ? "同意" : "不同意");
+    let complete;
+    const clicked = await open({ consent_read: fresh(), consent_set: () => new Promise((resolve) => { complete = resolve; }) });
+    await clicked.clickElement(clicked.node(granted ? "[data-consent-yes]" : "[data-consent-no]"));
+    const writes = (p) => p.invokes.filter(({cmd}) => cmd === "consent_set").map(({arg}) => arg);
+    check(`A149 按${granted ? "同意" : "不同意"}與打字送出完全相同參數`, writes(clicked).length === 1 && JSON.stringify(writes(clicked)) === JSON.stringify(writes(typed)));
+    check(`A149 ${granted} 保存忙碌時兩顆按鈕與輸入一起停用`, clicked.node("[data-consent-yes]").disabled && clicked.node("[data-consent-no]").disabled && clicked.input().disabled);
+    await clicked.clickElement(clicked.node("[data-consent-yes]"));
+    check(`A149 ${granted} 忙碌重按不重複寫入`, writes(clicked).length === 1);
+    complete?.(answerView);
+    await tick();
+    check(`A149 ${granted} 保存成功後兩顆按鈕放開`, !clicked.node("[data-consent-yes]").disabled && !clicked.node("[data-consent-no]").disabled);
+  }
+  const failedWrite = await open({consent_read: fresh(), consent_set: new Error("disk full")});
+  await failedWrite.clickElement(failedWrite.node("[data-consent-yes]"));
+  check("A149 同意寫入失敗兩鍵恢復、沒有假成功", !failedWrite.node("[data-consent-yes]").disabled && !failedWrite.node("[data-consent-no]").disabled && failedWrite.consentResult().includes("沒有保存") && failedWrite.consentProgress().includes("1 / 4"));
+  await failedWrite.clickElement(failedWrite.node("[data-consent-no]"));
+  check("A149 同意失敗後另一顆真的能再寫", failedWrite.invokes.filter(({cmd}) => cmd === "consent_set").length === 2);
+  for (const enabled of [false, true]) {
+    const next = fresh(); next.sheets[0].reviewed = true;
+    const voice = await open({
+      persona_read: { id: "chatgpt", consent_read_aloud: enabled },
+      consent_read: fresh(), consent_set: next,
+      persona_fixed_voice_admit: {presentation_id: "a149"},
+    }, {consentVoices: consentVoiceManifest()});
+    const plays = voice.audioPlays();
+    check(`A149 重讀朗讀 ${enabled} 保留開關與首張播放意圖`, voice.consentListen().dataset["aria-pressed"] === String(enabled) && plays === (enabled ? 1 : 0));
+    await voice.clickElement(voice.node("[data-consent-no]"));
+    check(`A149 朗讀 ${enabled} 換張的音訊副作用`, enabled ? voice.audioPlays() === plays + 1 && voice.audioSrc() === "./persona-consent-voices/v1/chatgpt/cloud-reading.ogg" : voice.audioPlays() === 0 && !voice.calls.includes("persona_fixed_voice_admit"));
+    const mismatched = consentView([true,true,false,false], [false,false,false,false]);
+    mismatched.sheets[2].wording = "新版條文";
+    // 以既有 consent_set 回覆推到不匹配條文。
+    const noClip = await open({ persona_read: {id: "chatgpt", consent_read_aloud: enabled}, consent_read: mismatched }, {consentVoices: consentVoiceManifest()});
+    check(`A149 ${enabled} 無相符錄音停用但保留開關`, noClip.consentListen().disabled && noClip.consentListen().dataset["aria-pressed"] === String(enabled) && noClip.audioPlays() === 0);
+  }
+  const toggle = await open({consent_read: fresh(), persona_fixed_voice_admit: {presentation_id:"a149"}}, {consentVoices: consentVoiceManifest()});
+  await toggle.clickElement(toggle.consentListen());
+  await toggle.clickElement(toggle.consentListen());
+  check("A149 開關兩次各保存正確布林並停止音訊", JSON.stringify(toggle.invokes.filter(({cmd}) => cmd === "persona_consent_speak_set").map(({arg}) => arg)) === JSON.stringify([{enabled:true},{enabled:false}]) && toggle.audioPlays() === 1 && !toggle.isSpeaking() && toggle.consentListen().dataset["aria-pressed"] === "false");
+  const failedToggle = await open({consent_read: fresh(), persona_consent_speak_set: new Error("disk full")}, {consentVoices: consentVoiceManifest()});
+  await failedToggle.clickElement(failedToggle.consentListen());
+  check("A149 開啟保存失敗保留關閉、不播放且可重按", failedToggle.audioPlays() === 0 && failedToggle.consentListen().dataset["aria-pressed"] === "false" && !failedToggle.consentListen().disabled && failedToggle.consentResult().includes("沒有保存"));
+  for (const enabled of [false, true]) {
+    const mismatch = await open({ consent_read: fresh(), persona_read: { id: "chatgpt", consent_read_aloud: enabled }, persona_consent_speak_set: { id: "chatgpt", consent_read_aloud: enabled } }, { consentVoices: consentVoiceManifest() });
+    const playsBeforeMismatch = mismatch.audioPlays();
+    await mismatch.clickElement(mismatch.consentListen());
+    check(`A149 朗讀回傳不符 ${enabled} 保留原開關並說明沒有讀回朗讀設定`, mismatch.consentListen().dataset["aria-pressed"] === String(enabled) && !mismatch.consentListen().disabled && mismatch.consentResult().includes("沒有讀回朗讀設定") && mismatch.audioPlays() === playsBeforeMismatch, { pressed: mismatch.consentListen().dataset["aria-pressed"], result: mismatch.consentResult(), playsBeforeMismatch, plays: mismatch.audioPlays() });
+  }
+  const ended = await open({ consent_read: fresh(), persona_fixed_voice_admit: {presentation_id: "a149-ended"} }, { consentVoices: consentVoiceManifest() });
+  await ended.clickElement(ended.consentListen());
+  ended.finishAudio();
+  await ended.clickElement(ended.consentListen());
+  check("A149 已播完再關閉只說關閉、不宣稱停止朗讀", ended.audioPlays() === 1 && ended.consentResult() === "條文朗讀已關閉。" && ended.consentListen().dataset["aria-pressed"] === "false");
+}
+if (process.env.A149_ONLY === "1") process.exit(failed ? 1 : 0);
 
 const CONSENT = "第一張同意書還沒簽——她不會開始記錄。在系統匣圖示上按右鍵，選「四張同意書…」簽好再回來";
 
@@ -2994,6 +3109,53 @@ console.log("63. 純瀏覽器 screenshot demo 有答案外觀，但沒有 native
   );
 }
 
+// 走輸入框 → ask IPC → 正式 renderer，再讀實際掛進答案泡泡的 disclosure。
+// open 是原生 details 的公開 DOM 屬性；瀏覽器的 summary 點擊另做真瀏覽器驗證。
+function checkOverviewWhy(p, name, exact) {
+  const details = p.hits().querySelectorAll("details").find(
+    (node) => node.querySelector("p")?.textContent === exact,
+  );
+  check(`${name} 精確說明存在且預設收合`,
+    !!details && !details.open && !details.hidden &&
+      details.children[0]?.tag === "summary" &&
+      details.children[0]?.textContent === "為什麼", p.hitTexts());
+  if (details) details.open = true;
+  check(`${name} 展開後保留完整原句`,
+    details?.open === true && details.querySelector("p")?.textContent === exact,
+    details?.textContent);
+  if (details) details.open = false;
+}
+
+function checkOverviewVoice(p, name) {
+  const voices = p.hits().querySelectorAll(".overview-voice");
+  check(`${name} 收合時有人話且不是內部說明`,
+    voices.length > 0 && voices.every((node) =>
+      !node.hidden && node.textContent.trim().length > 0 &&
+      !/OCR|理解卡|理解記憶|審閱層|模型|自報信心/.test(node.textContent)),
+    voices.map((node) => node.textContent));
+}
+
+// 單獨執行正式函式，作者拒絕不能借 renderOverview 的呼叫順序成立。
+const provenanceOf = runInNewContext(
+  `(${read(SRC).match(/function overviewProvenance\(card\) \{[\s\S]*?\n\}/)[0]})`,
+);
+{
+  let rejected = false;
+  try { provenanceOf({ author: "future_author" }); }
+  catch (error) { rejected = error.message === "不認得的記憶總覽作者：future_author"; }
+  check("overviewProvenance 未知作者獨立呼叫仍 throw", rejected);
+}
+const provenanceCases = [
+  ["interpreter", 0.31, "我的印象", "模型整理的假設 · 模型自報信心 0.31（不是量出來的）"],
+  ["reviewer", 0.42, "重新想過的印象", "審閱層修訂 · 原模型自報信心 0.42（不是量出來的）"],
+  ["user", 0.88, "你修正過的說法", "你修正過 · 不是她量出來的，也不是模型說的"],
+];
+for (const [author, model_confidence, voice, why] of provenanceCases) {
+  const actual = provenanceOf({ author, model_confidence });
+  check(`overviewProvenance ${author} 同時回傳短句與精確說明`,
+    actual.voice === voice && actual.why === why, actual);
+}
+
 console.log("64. 記憶總覽只畫有證據的 L2 假設；證據要真人按才開");
 {
   let asks = 0;
@@ -3039,6 +3201,24 @@ console.log("64. 記憶總覽只畫有證據的 L2 假設；證據要真人按�
   });
   await p.type("QUESTION_MUST_STAY_LOCAL");
   const text = azureCalls(p)[0]?.arg?.text ?? "";
+  checkOverviewVoice(p, "ready");
+  const renderedCards = p.hits().querySelectorAll(".overview-card");
+  for (const [index, [author, , voice, why]] of provenanceCases.entries()) {
+    const card = renderedCards[index];
+    check(`overviewProvenance ${author} 兩句接到同一張卡片`,
+      card?.querySelector(".overview-meta")?.textContent.endsWith(` · ${voice}`) &&
+      card?.querySelector("details")?.querySelector("p")?.textContent === why,
+      card?.textContent);
+  }
+  for (const [name, exact] of [
+    ["ready", "我目前對最近幾段有這些理解。每張下面都有畫面出處按鈕；內容可能由模型整理、審閱層修訂，或由你修正，不是我量到的確定事實："],
+    ["truncated", "這裡只列最近一部分有證據的理解。"],
+    ["withheld", "另外有 2 張理解卡目前沒有可點開的畫面出處，這裡沒有列。"],
+    ["interpreter", "模型整理的假設 · 模型自報信心 0.31（不是量出來的）"],
+    ["reviewer", "審閱層修訂 · 原模型自報信心 0.42（不是量出來的）"],
+    ["user", "你修正過 · 不是她量出來的，也不是模型說的"],
+  ]) checkOverviewWhy(p, name, exact);
+
   check(
     "ready 明講是可修正的理解／假設，不冒充確定事實",
     p.hitTexts().some(
@@ -3126,7 +3306,7 @@ console.log("64. 記憶總覽只畫有證據的 L2 假設；證據要真人按�
   );
 
   const expected =
-    "我目前對最近幾段有這些理解。每張下面都有畫面出處按鈕；內容可能由模型整理、審閱層修訂，或由你修正，不是我量到的確定事實：\n修好安裝更新\n審閱後的更新流程\n這是我自己修正的說法";
+    "最近這幾件事，我記得是這樣。\n修好安裝更新\n審閱後的更新流程\n這是我自己修正的說法";
   check("Azure overview payload 恰好只有正文", text === expected, text);
   for (const localOnly of [
     "QUESTION_MUST_STAY_LOCAL",
@@ -3167,19 +3347,20 @@ console.log("65. raw-only／empty／證據遺失各自說實話，不掉進一�
     {
       overview: { kind: "raw_only" },
       wanted: "有原始紀錄，但還沒有整理成能直接回答的理解記憶",
-      azure:
-        "我有原始紀錄，但還沒有整理成能直接回答的理解記憶；這次不會拿 OCR 片段冒充答案。",
+      exact: "我有原始紀錄，但還沒有整理成能直接回答的理解記憶；這次不會拿 OCR 片段冒充答案。",
+      azure: "有記下來，但還沒理清楚。",
     },
     {
       overview: { kind: "empty" },
       wanted: "目前還沒有留下能回答這題的記憶",
-      azure: "我目前還沒有留下能回答這題的記憶。",
+      exact: "我目前還沒有留下能回答這題的記憶。",
+      azure: "這個我沒印象。",
     },
     {
       overview: { kind: "evidence_missing", cards: 3 },
       wanted: "目前沒有可點開的畫面出處",
-      azure:
-        "我有整理過的理解記憶，但最近這 3 張卡片目前沒有可點開的畫面出處；這裡不把它們當成答案。",
+      exact: "我有整理過的理解記憶，但最近這 3 張卡片目前沒有可點開的畫面出處；這裡不把它們當成答案。",
+      azure: "我有點印象，但找不到畫面，所以不敢說。",
     },
   ];
   for (const test of cases) {
@@ -3194,6 +3375,12 @@ console.log("65. raw-only／empty／證據遺失各自說實話，不掉進一�
       recording_state: "recording",
     });
     await p.type("你知道了什麼");
+    checkOverviewWhy(p, test.overview.kind, test.exact);
+    checkOverviewVoice(p, test.overview.kind);
+    check(`${test.overview.kind} 沒有答案卡片或證據按鈕`,
+      p.hits().querySelector(".hit, .overview-evidence") === null,
+      p.hitTexts());
+
     check(`${test.overview.kind} 有自己的答案`, p.hitTexts().some((line) => line.includes(test.wanted)), p.hitTexts());
     check(
       `${test.overview.kind} 不顯示 OCR 或 generic empty`,
@@ -3209,6 +3396,33 @@ console.log("65. raw-only／empty／證據遺失各自說實話，不掉進一�
       azureCalls(p),
     );
   }
+}
+
+console.log("65b. 總覽的大腦狀態精確版可展開，本機朗讀不念內部說明");
+for (const [state, exact] of [
+  ["search_failed", "Codex 這次沒有完成查詢；下方是依原問題找到的本機記憶。到設定按「測試目前大腦」即可重測。"],
+  ["consent_required", "這題只顯示本機結果；第二張「雲端解讀」目前沒有授權 Codex 接手。"],
+  ["not_configured", "到設定選一個 CLI，大腦才會接手文字問題。"],
+]) {
+  const p = await open({
+    ask: answer({ kind: "memory_overview", overview: { kind: "empty" }, brain: { state, provider: "Codex" } }),
+    recording_state: "recording",
+    persona_read: { id: "chatgpt", enabled: true, motion: true, tap_lines: true, voice_enabled: true },
+  }, { systemVoices: [{ name: "Hanhan", lang: "zh-TW", localService: true }] });
+  await p.type("你知道了什麼");
+  checkOverviewWhy(p, `brain-${state}`, exact);
+  checkOverviewVoice(p, `brain-${state}`);
+  for (const details of p.hits().querySelectorAll("details")) details.open = true;
+  await p.clickElement(p.localReadButton());
+  check(`brain-${state} 本機朗讀有人話、不念展開說明`,
+    p.localSpeechTexts().length === 1 &&
+      p.localSpeechTexts()[0].includes("這個我沒印象。") &&
+      !p.localSpeechTexts()[0].includes(exact) &&
+      !p.localSpeechTexts()[0].includes("為什麼") &&
+      !p.localSpeechTexts()[0].includes("我目前還沒有留下能回答這題的記憶。"),
+    p.localSpeechTexts());
+  const calls = p.invokes.filter(({ cmd }) => cmd === "ask").length;
+  check(`brain-${state} 展開收合不重送 ask`, calls === 1, p.invokes);
 }
 
 console.log("66. 未知 overview kind 是 contract error，不偽裝成沒有記憶");
@@ -4144,11 +4358,11 @@ console.log("83. 第一次開啟直接在主對話逐張問；無效回答不寫
     },
   });
   check(
-    "開場就是第一張完整條文，輸入框明講兩個答案",
+    "選角後就是第一張完整條文，提示明講按鈕與打字",
     !p.consentGuide().hidden &&
       p.consentProgress() === "同意書 1 / 4" &&
       p.consentWording() === state.sheets[0].wording &&
-      p.input().placeholder.includes("同意"),
+      p.node("[data-consent-prompt]").textContent.includes("同意") && p.node("[data-consent-prompt]").textContent.includes("打字"),
     {
       hidden: p.consentGuide().hidden,
       progress: p.consentProgress(),
@@ -4235,7 +4449,7 @@ console.log("84. CLI 回 consent_required 時保留原問題；補答後同一�
   );
 }
 
-console.log("85. 條文錄音只能由 trusted click 播，而且同一顆按鈕停得下來");
+console.log("85. 條文朗讀預設關閉，trusted click 開啟後同一顆開關停得下來");
 {
   const p = await open(
     {
@@ -4264,7 +4478,7 @@ console.log("85. 條文錄音只能由 trusted click 播，而且同一顆按鈕
   );
   check(
     "正在念的時候，按鈕自己說得出現在按下去會停",
-    p.consentListen().textContent.includes("停止") && p.consentListen().disabled !== true,
+    p.consentListen().textContent.includes("按下關閉") && p.consentListen().disabled !== true,
     p.consentListen().textContent,
   );
 
@@ -4298,8 +4512,8 @@ console.log("85. 條文錄音只能由 trusted click 播，而且同一顆按鈕
   );
   check(
     "停下來之後按鈕自己說得出現在按下去會播",
-    p.consentListen().textContent.includes("念給我聽") &&
-      !p.consentListen().textContent.includes("停止"),
+    p.consentListen().textContent.includes("朗讀關閉") &&
+      !p.consentListen().textContent.includes("按下關閉"),
     p.consentListen().textContent,
   );
 
@@ -4312,18 +4526,18 @@ console.log("85. 條文錄音只能由 trusted click 播，而且同一顆按鈕
     { plays: p.audioPlays(), trace: p.playbackTrace() },
   );
 
-  // 第二條反向。自己念完那條路不經過 `stopPersonaMedia()`，所以「正在念」那個
-  // 狀態要由播完的那一端自己收掉；漏了的話按鈕會卡在「停止朗讀」，而下一下按
-  // 下去什麼都不會發生。
+  // 自己念完只收掉播放狀態，不能把使用者保存的朗讀選擇關掉。
+  // 關閉再開啟仍能重新播放。
   p.finishAudio();
   check(
-    "自己念完之後按鈕也回到念給我聽",
-    p.consentListen().textContent.includes("念給我聽") &&
-      !p.consentListen().textContent.includes("停止"),
+    "自己念完之後開關仍開著",
+    p.consentListen().textContent.includes("朗讀開啟") &&
+      p.consentListen().dataset["aria-pressed"] === "true",
     p.consentListen().textContent,
   );
   await p.clickElement(p.consentListen());
-  check("念完之後再按仍然播得出來", p.audioPlays() === 3, {
+  await p.clickElement(p.consentListen());
+  check("念完之後關閉再開仍然播得出來", p.audioPlays() === 3, {
     plays: p.audioPlays(),
     trace: p.playbackTrace(),
   });
@@ -4347,7 +4561,7 @@ console.log("85. 條文錄音只能由 trusted click 播，而且同一顆按鈕
     "逐字稿對不上這一版條文時，朗讀鍵一出現就是灰的並且說明原因",
     mismatched.consentListen().disabled === true &&
       mismatched.consentListen().title.includes("沒有相符的本機錄音") &&
-      mismatched.consentListen().textContent.includes("念給我聽"),
+      mismatched.consentListen().textContent.includes("朗讀關閉"),
     {
       disabled: mismatched.consentListen().disabled,
       title: mismatched.consentListen().title,
@@ -4657,8 +4871,9 @@ console.log("88. 三顆播放鍵的停止規則一致，而下一顆躲不掉這
 
 console.log("89. 條文錄音播不出來的時候，不准改用系統聲音把條文念掉");
 {
-  // SPEC：「同意書朗讀也只接受當張『念給我聽』的 trusted click，不 autoplay、
-  // 不借 Azure 或 `localService`」。前半段 §85 守著，**後半段沒有人守**——而
+  // SPEC：同意書朗讀出廠關閉，一次 trusted click 開啟後每張各播一次，不必逐張再按；
+  // 關閉立即停止，選擇隨 config 保存至重開後，逐字稿不符就停用當張。
+  // 不借 Azure 或 `localService`；開關由 A149 守著，這一節守不借其他聲音。
   // 隔壁那條路（角色點擊台詞）**故意**有 localService fallback（見真機清單
   // alpha.108 那一項：「single voice read 回 null／cache stale／audio play 拒絕，
   // 確認同一次 trusted click 會嘗試 localService fallback」）。兩條路現在是分開
@@ -4711,8 +4926,8 @@ console.log("89. 條文錄音播不出來的時候，不准改用系統聲音把
     failed.invokes.map(({ cmd }) => cmd),
   );
   check(
-    "失敗之後那顆鍵回到念給我聽，還按得動",
-    failed.consentListen().textContent === playLabel &&
+    "失敗之後開關仍開著，還按得動",
+    failed.consentListen().textContent !== playLabel &&
       failed.consentListen().disabled !== true,
     { label: failed.consentListen().textContent, disabled: failed.consentListen().disabled },
   );
@@ -4723,7 +4938,7 @@ console.log("89. 條文錄音播不出來的時候，不准改用系統聲音把
   //
   // 擋「有人把兩條路合併」要用原始碼守，因為那條路現在**還不存在**，行為測試看
   // 不到不存在的東西。`body !== ""` 是 fail-closed：錨點鏽掉要紅，不要安靜略過。
-  const body = /async function playConsentSheet\(event\) \{[\s\S]*?\n\}/u.exec(read(SRC))?.[0] ?? "";
+  const body = /async function playConsentSheet\(\) \{[\s\S]*?\n\}/u.exec(read(SRC))?.[0] ?? "";
   check(
     "條文朗讀那條路上只有 bundled Ogg 一種聲音",
     body !== "" &&
@@ -5045,14 +5260,15 @@ console.log("92. 停止、晚到的 play()、失敗後重按、重開出處、tr
     failed.failAudio();
     await tick();
     check(
-      "前提：失敗那句還在，鍵回到念給我聽",
+      "前提：失敗那句還在，開關保持開啟",
       failed.consentResult() === failedLabel &&
-        failed.consentListen().textContent === playLabel,
+        failed.consentListen().textContent === stopLabel,
       { said: failed.consentResult(), label: failed.consentListen().textContent },
     );
     await failed.clickElement(failed.consentListen());
+    await failed.clickElement(failed.consentListen());
     check(
-      "失敗後再按，那句失敗自己消失，而且真的在念",
+      "失敗後關閉再開，那句失敗自己消失，而且真的在念",
       failed.audioPlays() === 2 &&
         failed.consentListen().textContent === stopLabel &&
         failed.consentResult() === "",

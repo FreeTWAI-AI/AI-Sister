@@ -79,8 +79,9 @@ GET；alpha.110 預設關閉、另行同意後只替最新新答案或手動重�
 
 - alpha.119 起，17 位角色每位都有 bundled 基本語音 8 句＋擴充語音 24 句，恰好
   544 段 Ogg Opus、8,895,060 bytes；alpha.132 起另有每位 20 句、共 340 段閒話短句、
-  2,249,872 bytes，那一包是唯一不必先被點到就會出聲的（只有 idle-giggle 與
-  answer-beat 兩個出口，其餘關卡照舊）。runtime 必須完整驗過 manifest 的 17×32 roster、
+  2,249,872 bytes，那一包是唯一不必先點角色或朗讀開關就會出聲的（只有 idle-giggle
+  與 answer-beat 兩個出口，其餘關卡照舊）；alpha.149 起同意書朗讀改成一顆開關，
+  出廠關閉，使用者按開之後才逐張出聲。runtime 必須完整驗過 manifest 的 17×32 roster、
   line/pack/use/text/triggers/path/bytes/hash/duration 才啟用整庫；固定語音只由 trusted
   角色操作或 exact 日常短句啟動，不叫 CLI、不連網、不借 `localService`。一般問題照舊
   走記憶／CLI；動態答案只有另一顆本機朗讀按鈕能用 `localService`。WAV、reference、
