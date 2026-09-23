@@ -5,7 +5,7 @@ const refresh = document.querySelector('[data-cli-refresh]');
 const cancel = document.querySelector('[data-cli-cancel]');
 const outbound = document.querySelector('[data-cli-outbound]');
 const board = document.querySelector('[data-cli-board]');
-const invoke = (name, args) => window.__TAURI__.core.invoke(name, args);
+const invoke = globalThis.__TAURI__?.core?.invoke ?? null;
 const ids = ['claude', 'codex', 'grok', 'gemini'];
 let generation = 0;
 let busy = false;
@@ -20,9 +20,13 @@ function paintRows(values, fallback = '問不到；請重新查詢') {
     return li;
   }));
 }
+function failureReason(error) {
+  const reason = typeof error === 'string' ? error : error?.message;
+  return reason === '查詢已停止' ? reason : '問不到；請重新查詢';
+}
 function paintBoard(view) {
-  if (!view?.config_readable) board.textContent = '公開看板問不到；可重新查詢';
-  else if (view.stopped) board.textContent = '公開看板已停止';
+  if (view?.stopped) board.textContent = '公開看板已停止';
+  else if (!view?.config_readable) board.textContent = '公開看板問不到；可重新查詢';
   else if (!view.enabled) board.textContent = '公開看板未開啟，可到設定開啟';
   else {
     const labels = {confirmed: '已驗證重置', unverified: '事件未驗證，不當成重置', other: '不是重置的事件', none: '沒有已驗證重置事件'};
@@ -33,6 +37,15 @@ function paintBoard(view) {
 }
 async function readStatus(force = false) {
   if (busy || !panel.open) return;
+  if (!invoke) {
+    const reason = '這裡查不到；請在桌面程式裡查看';
+    paintRows([], reason);
+    outbound.textContent = `今天 AI-Sister 的大腦外送：${reason}`;
+    board.textContent = `公開看板：${reason}`;
+    refresh.disabled = true;
+    cancel.hidden = true;
+    return;
+  }
   const current = ++generation;
   busy = true;
   refresh.disabled = true;
@@ -43,14 +56,14 @@ async function readStatus(force = false) {
   await Promise.allSettled([
     invoke('cli_status_read', { refresh: force }).then(value => {
       if (valid()) paintRows(value);
-    }).catch(() => { if (valid()) paintRows([]); }),
+    }).catch(error => { if (valid()) paintRows([], failureReason(error)); }),
     invoke('cli_status_outbound').then(value => {
       if (valid()) outbound.textContent = Number.isSafeInteger(value) && value >= 0
         ? `今天 AI-Sister 的大腦外送：${value} 趟（所有 CLI 合計）`
         : '今天 AI-Sister 的大腦外送：問不到；請重新查詢';
-    }).catch(() => { if (valid()) outbound.textContent = '今天 AI-Sister 的大腦外送：問不到；請重新查詢'; }),
+    }).catch(error => { if (valid()) outbound.textContent = `今天 AI-Sister 的大腦外送：${failureReason(error)}`; }),
     invoke('usage_status_read').then(value => { if (valid()) paintBoard(value); })
-      .catch(() => { if (valid()) paintBoard(null); }),
+      .catch(error => { if (valid()) board.textContent = `公開看板：${failureReason(error)}`; }),
   ]);
   if (current === generation) {
     busy = false;
@@ -66,6 +79,7 @@ async function stop() {
   cancel.hidden = true;
   paintRows([], '查詢已停止');
   outbound.textContent = '今天 AI-Sister 的大腦外送：查詢已停止';
+  board.textContent = '公開看板：查詢已停止';
   try { if (wasBusy) await invoke('cli_status_cancel'); }
   finally { refresh.disabled = false; }
 }

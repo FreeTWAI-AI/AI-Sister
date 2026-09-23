@@ -761,16 +761,18 @@ mod login_tests {
     #[test]
     fn actual_timeout_is_unknown() {
         let state = Arc::new(AtomicU8::new(JOB_ACTIVE));
-        assert_eq!(
-            login_probe(
-                BrainProvider::Codex,
-                Path::new("/bin/sh"),
-                &["-c", "printf 'Logged in using ChatGPT'; sleep 10"],
-                &state,
-                Duration::from_millis(50)
-            ),
-            "問不到；請重新查詢"
+        let status = login_probe(
+            BrainProvider::Codex,
+            Path::new("/bin/sh"),
+            &["-c", "printf 'Logged in using ChatGPT'; sleep 10"],
+            &state,
+            Duration::from_millis(50),
         );
+        println!(
+            "CLI_STATUS_TIMEOUT_ROW={}",
+            serde_json::json!({"id": "codex", "status": status})
+        );
+        assert_eq!(status, "問不到；請重新查詢");
     }
     #[cfg(unix)]
     #[test]
