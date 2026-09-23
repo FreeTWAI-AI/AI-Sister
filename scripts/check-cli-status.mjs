@@ -118,8 +118,12 @@ for (const rule of absoluteRules) {
   const zText = declaration(rule.body, 'z-index');
   if (zText === null) continue;
   if (!/^-?\d+$/u.test(zText)) throw new Error(`CSS 形狀讀不懂：${rule.selector} 的 z-index: ${zText}`);
-  if (Number(zText) <= answerZ) continue;
-  higherSelectors.push(...selectorsOf(rule));
+  // 同一 stacking context 的 z-index 相等時由 DOM 順序決定前後，後面的層仍可能蓋住氣泡。
+  const atOrAboveAnswer = Number(zText) >= answerZ;
+  if (!atOrAboveAnswer) continue;
+  const selectors = selectorsOf(rule).filter(selector => selector !== '.answer-bubble');
+  if (selectors.length === 0) continue;
+  higherSelectors.push(...selectors);
   const top = declaration(rule.body, 'top');
   const bottom = declaration(rule.body, 'bottom');
   if (top === null && bottom === null) throw new Error(`CSS 形狀讀不懂：${rule.selector} 沒有 top 或 bottom`);
@@ -141,14 +145,23 @@ for (const rule of absoluteRules) {
     range = topY !== null ? [topY, topY + height] : [bottomY - height, bottomY];
   }
   // 無 px 高度（包括文字自動高度、vh 上限）不能用錨點排除。
-  if (range === null) unknownAbove.push(...selectorsOf(rule));
-  else if (range[0] <= answerBottom && range[1] >= answerTop) overlappingAbove.push(...selectorsOf(rule));
+  if (range === null) unknownAbove.push(...selectors);
+  else if (range[0] <= answerBottom && range[1] >= answerTop) overlappingAbove.push(...selectors);
 }
 check('overlay-higher-selectors-extracted', higherSelectors.length >= 1);
 check('overlay-overlapping-higher-selectors-extracted', overlappingAbove.length >= 1);
 const hiddenFor = (selector, state) => rules.some(rule =>
   declaration(rule.body, 'display') === 'none' &&
   selectorsOf(rule).includes(`body.${state} ${selector}`));
+// 例外不只要列名：兩種氣泡狀態都必須保留，不能又用 display:none 收掉。
+const exceptionStates = overlayExceptions.flatMap(({ selector }) =>
+  ['has-hits', 'has-consent-guide'].map(state => ({ selector, state })));
+check('overlay-exception-states-extracted', exceptionStates.length >= 1);
+for (const { selector, state } of exceptionStates) {
+  const hidden = hiddenFor(selector, state);
+  check(`overlay-exception-retained-${selector}-${state}`, !hidden);
+  if (hidden) console.log(`    例外 ${selector} 在 ${state} 必須保留，但有 body.${state} ${selector} 的 display:none 規則`);
+}
 const unhidden = [...new Set([...overlappingAbove, ...unknownAbove])].filter(selector => !exempt(selector))
   .flatMap(selector => ['has-hits', 'has-consent-guide']
     .filter(state => !hiddenFor(selector, state)).map(state => `${selector} / ${state}`));
