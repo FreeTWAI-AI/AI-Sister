@@ -393,6 +393,15 @@ pub struct Measure {
 }
 
 /// 一項自檢的結論。
+///
+/// 報告記號：
+/// * `✓`——量到了，而且是預期的樣子。
+/// * `✗`——量到了，不是預期的樣子。
+/// * `－`——這一輪沒發生過，量不到。
+/// * `？`——機器判不了這一格。
+/// * `！`——該量到卻沒量到。
+/// * `～`——尚未收到量測結果。
+/// * `＊`——試過了，可是每一次都沒走到底。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Verdict {
     /// 量到了，而且是預期的樣子。
@@ -434,6 +443,19 @@ pub enum Verdict {
 }
 
 impl Verdict {
+    // Rust 沒有內建 enum iterator；測試逐一走這份清單，mark／say 的 match
+    // 不留 `_`，新增變體卻沒接上報告時必須編譯失敗。
+    #[cfg(test)]
+    const ALL: [Self; 7] = [
+        Self::AsAsked,
+        Self::Off,
+        Self::NotSeen,
+        Self::CantJudge,
+        Self::NotMeasured,
+        Self::AwaitingMeasurement,
+        Self::NeverLanded,
+    ];
+
     fn mark(self) -> &'static str {
         match self {
             Verdict::AsAsked => "✓",
@@ -441,7 +463,7 @@ impl Verdict {
             Verdict::NotSeen => "－",
             Verdict::CantJudge => "？",
             Verdict::NotMeasured => "！",
-            Verdict::AwaitingMeasurement => "－",
+            Verdict::AwaitingMeasurement => "～",
             Verdict::NeverLanded => "＊",
         }
     }
@@ -3521,9 +3543,22 @@ mod notebook_tests {
         );
     }
 
+    #[test]
+    fn all_seven_verdict_marks_are_distinct() {
+        let marks: std::collections::HashSet<_> =
+            Verdict::ALL.into_iter().map(Verdict::mark).collect();
+        assert!(!marks.is_empty(), "至少要取得一個 Verdict 記號");
+        assert_eq!(Verdict::ALL.len(), 7, "必須走遍七個 Verdict 變體");
+        assert_eq!(
+            marks.len(),
+            Verdict::ALL.len(),
+            "七個 Verdict 記號必須兩兩不同"
+        );
+    }
+
     /// 每一種「沒量到」的記號都是全形，寬度不會因為終端機而變。
     ///
-    /// `✓`／`✗` 是一組（窄），`－？！＊` 是另一組（全形）。同一組裡混進一個
+    /// `✓`／`✗` 是一組（窄），`－？！～＊` 是另一組（全形）。同一組裡混進一個
     /// East Asian **Ambiguous** 的字（`…`、`⋯` 都是），那一份報告在他的終端
     /// 機和我的終端機會長得不一樣——而每一列的值都靠這一欄對齊。
     #[test]
