@@ -393,6 +393,15 @@ pub struct Measure {
 }
 
 /// 一項自檢的結論。
+///
+/// 報告記號：
+/// * `✓`——量到了，而且是預期的樣子。
+/// * `✗`——量到了，不是預期的樣子。
+/// * `－`——這一輪沒發生過，量不到。
+/// * `？`——機器判不了這一格。
+/// * `！`——該量到卻沒量到。
+/// * `～`——尚未收到量測結果。
+/// * `＊`——試過了，可是每一次都沒走到底。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Verdict {
     /// 量到了，而且是預期的樣子。
@@ -412,14 +421,17 @@ pub enum Verdict {
     /// 下，「沒跑起來」是叫我去修。兩個都印成空白的話，看報告的人只會做前
     /// 面那件事，而錯的是後面那件。
     NotMeasured,
+    /// 量測已啟動，但還沒有收到樣本；不能據此判定故障。
+    AwaitingMeasurement,
     /// 試過了，可是每一次都沒走到底。
     ///
-    /// 空白有三種，這是第三種。三種要他做的事都不一樣：
+    /// 沒有結果的原因不同，不能混成一種：
     ///
     /// * [`Verdict::NotSeen`]——他還沒去做那件事。多玩一會兒再匯出。
     /// * [`Verdict::NeverLanded`]——他做了，每一次都被別的事情擋掉。原因就
     ///   在底下那幾格，而那個原因決定該改的是設定還是我。
     /// * [`Verdict::NotMeasured`]——事情發生了，是這一格量不出來。我去修。
+    /// * [`Verdict::AwaitingMeasurement`]——尚未收到樣本，還不能判定。
     ///
     /// 少了中間這一種，最常見的那次失敗（CLI 還沒設好，一問就錯）會印成第
     /// 一種——叫他去做他已經做過的事。
@@ -431,6 +443,20 @@ pub enum Verdict {
 }
 
 impl Verdict {
+    // Rust 沒有內建 enum iterator；測試逐一走這份清單，mark／say 的 match
+    // 不留 `_`，新增變體卻沒接上報告時必須編譯失敗。
+    // verdict_all_covers_source_variants 另從原始碼核對 ALL，漏列也不能通過。
+    #[cfg(test)]
+    const ALL: [Self; 7] = [
+        Self::AsAsked,
+        Self::Off,
+        Self::NotSeen,
+        Self::CantJudge,
+        Self::NotMeasured,
+        Self::AwaitingMeasurement,
+        Self::NeverLanded,
+    ];
+
     fn mark(self) -> &'static str {
         match self {
             Verdict::AsAsked => "✓",
@@ -438,6 +464,7 @@ impl Verdict {
             Verdict::NotSeen => "－",
             Verdict::CantJudge => "？",
             Verdict::NotMeasured => "！",
+            Verdict::AwaitingMeasurement => "～",
             Verdict::NeverLanded => "＊",
         }
     }
@@ -449,6 +476,7 @@ impl Verdict {
             Verdict::NotSeen => "這一輪沒發生過，量不到",
             Verdict::CantJudge => "機器判不了，答案原文在線下面 ⑤，你自己看",
             Verdict::NotMeasured => "該量到卻沒量到——不是這一輪沒發生，是這一格量不出來",
+            Verdict::AwaitingMeasurement => "尚未收到量測結果",
             Verdict::NeverLanded => "試過了，可是每一次都沒走到底——底下那幾格寫著為什麼",
         }
     }
@@ -1066,14 +1094,14 @@ impl Notebook {
                 ),
             ],
             verdict: if bars.is_empty() {
-                /* 開機那一段一定會送一則（`noteTheChromeBar()` 就排在 `started`
-                 * 後面兩行），所以「這一輪開過機、卻一則都沒有」＝那支量測沒
-                 * 跑起來，不是他還沒去翻那一槓。
+                /* 開機會啟動那一槓的量測，但過場結束後才取樣，連按時舊取樣
+                 * 也會被丟棄。有 started 卻沒有 bar，只能說目前尚未量到；可能
+                 * 還在等過場或沒有成功送達，不能推論量測沒跑。
                  *
-                 * 但簿子擠掉過就不能這樣講：開機那一則存在欄位裡不會被擠，那
-                 * 一槓的卻會。分不出來的時候講回「沒量到」，不要指控。 */
+                 * 若簿子擠掉過，連「尚未量到」也不能確定：started 另存欄位，
+                 * bar 卻可能已被擠掉，所以保留 NotSeen。 */
                 if self.started_at.is_some() && self.dropped == 0 {
-                    Verdict::NotMeasured
+                    Verdict::AwaitingMeasurement
                 } else {
                     Verdict::NotSeen
                 }
@@ -2763,8 +2791,8 @@ mod notebook_tests {
     /// 所以每一格都該落在最單純的那一種：
     ///
     /// * ② ③ ④ ⑤ ⑥ ＝「你還沒去做那件事」，多玩一下就有了。
-    /// * ① ＝「開機一定會送一則那一槓的觀測，一則都沒有就是那一格量不出來」，
-    ///   那要我去修。
+    /// * ① ＝「開機已啟動那一槓的觀測，但目前尚未收到樣本」；可能還在等
+    ///   過場，不能斷言探針故障，也不能說他沒去翻。
     ///
     /// 第三種（`NeverLanded`，試過了但每次都沒走到底）在這一本裡到不了——它
     /// 要有 `ask_failed` 或 `giggle_skipped`，而這裡一則都沒有。守它的是
@@ -2790,9 +2818,11 @@ mod notebook_tests {
         }
         assert_eq!(
             item(&book, 1).verdict,
-            Verdict::NotMeasured,
-            "開機一定會送一則那一槓的觀測，一則都沒有不是他沒去翻"
+            Verdict::AwaitingMeasurement,
+            "開機已啟動觀測但尚無樣本，不代表他沒去翻"
         );
+        assert!(reported(&book).contains("尚未收到量測結果"));
+        assert!(!reported(&book).contains("該量到卻沒量到"));
         // 第 7 項永遠是「機器判不了」——它沒有一個數字答得出來。
         assert_eq!(item(&book, 7).verdict, Verdict::CantJudge);
     }
@@ -3262,8 +3292,8 @@ mod notebook_tests {
     /// 擠掉過就不可以指控那一槓的量測壞了。
     ///
     /// 開機那一則存在欄位裡、不會被擠；那一槓的那一則存在清單裡、會。所以
-    /// 「有開機、沒有那一槓」在簿子滿了的時候是正常的，而在沒滿的時候才是
-    /// 故障。分不出來就講回「沒量到」——指控要有把握。
+    /// 「有開機、沒有那一槓」可能是已擠掉，也可能仍在等取樣；沒有擠掉時
+    /// 才能確定目前尚未量到，不能據此指控量測故障。
     #[test]
     fn a_full_notebook_does_not_accuse_the_chrome_bar_probe() {
         let mut rolled = Notebook::new();
@@ -3278,14 +3308,14 @@ mod notebook_tests {
             "擠掉過就分不出是壞了還是滾掉了，不可以指控"
         );
 
-        // 對照組：沒擠掉過的同一種簿子，就要指得出來。
+        // 對照組：沒擠掉過的同一種簿子，目前確實尚未量到。
         let mut kept = Notebook::new();
         kept.note(started());
         kept.note(poke(1_789_222_000_000, true, Some("poke-aiyo")));
         assert_eq!(
             item(&kept, 1).verdict,
-            Verdict::NotMeasured,
-            "什麼都沒滾掉、開機那一則卻沒帶出那一槓＝那支量測沒跑"
+            Verdict::AwaitingMeasurement,
+            "什麼都沒滾掉、有開機但尚無那一槓的取樣＝目前尚未量到"
         );
     }
 
@@ -3514,9 +3544,86 @@ mod notebook_tests {
         );
     }
 
+    // 只接受無欄位的變體與行註解；每個逗號之間必須整段都是識別字。
+    // 不用 find/filter 抽部分命中：屬性、欄位、判別值、區塊註解等都當場拒絕。
+    fn verdict_names_from_source(source: &str) -> Vec<String> {
+        let (_, tail) = source
+            .split_once("pub enum Verdict {")
+            .expect("找不到 enum Verdict 的開頭");
+        let uncommented = tail
+            .lines()
+            .map(|line| line.split_once("//").map_or(line, |(code, _)| code))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let (body, _) = uncommented
+            .split_once('}')
+            .expect("找不到 enum Verdict 的結尾");
+        let mut names = Vec::new();
+        for part in body.trim().trim_end_matches(',').split(',') {
+            let name = part.trim();
+            assert!(
+                !name.is_empty()
+                    && name.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+                    && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'),
+                "enum Verdict 有未解析內容：{name:?}"
+            );
+            names.push(name.to_owned());
+        }
+        assert!(!names.is_empty(), "enum Verdict 至少要抽到一個變體");
+        names
+    }
+
+    #[test]
+    fn verdict_all_covers_source_variants() {
+        let names = verdict_names_from_source(include_str!("diagnose.rs"));
+        let listed: Vec<_> = Verdict::ALL.iter().map(|v| format!("{v:?}")).collect();
+        assert!(!listed.is_empty(), "ALL 至少要取得一個變體");
+        for name in &names {
+            assert!(listed.contains(name), "Verdict::ALL 漏列變體：{name}");
+        }
+        for name in &listed {
+            assert!(names.contains(name), "Verdict::ALL 多列變體：{name}");
+        }
+        assert_eq!(names.len(), listed.len(), "Verdict::ALL 不可重複列變體");
+    }
+
+    #[test]
+    fn verdict_source_parser_consumes_every_variant() {
+        assert_eq!(
+            verdict_names_from_source("pub enum Verdict { One, Two, // comment with }\n Three }"),
+            ["One", "Two", "Three"]
+        );
+        for body in [
+            "",
+            "One, Hidden(u8)",
+            "One, Hidden { field: u8 }",
+            "One, Hidden = 3",
+            "One, #[cfg(test)] Hidden",
+            "One, /* comment */ Hidden",
+        ] {
+            let source = format!("pub enum Verdict {{ {body} }}");
+            assert!(
+                std::panic::catch_unwind(|| verdict_names_from_source(&source)).is_err(),
+                "未解析內容不可放過：{body:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn all_verdict_marks_are_distinct() {
+        let marks: std::collections::HashSet<_> =
+            Verdict::ALL.into_iter().map(Verdict::mark).collect();
+        assert!(!marks.is_empty(), "至少要取得一個 Verdict 記號");
+        assert_eq!(
+            marks.len(),
+            Verdict::ALL.len(),
+            "所有 Verdict 記號必須兩兩不同"
+        );
+    }
+
     /// 每一種「沒量到」的記號都是全形，寬度不會因為終端機而變。
     ///
-    /// `✓`／`✗` 是一組（窄），`－？！＊` 是另一組（全形）。同一組裡混進一個
+    /// `✓`／`✗` 是一組（窄），`－？！～＊` 是另一組（全形）。同一組裡混進一個
     /// East Asian **Ambiguous** 的字（`…`、`⋯` 都是），那一份報告在他的終端
     /// 機和我的終端機會長得不一樣——而每一列的值都靠這一欄對齊。
     #[test]
@@ -3525,6 +3632,7 @@ mod notebook_tests {
             Verdict::NotSeen,
             Verdict::CantJudge,
             Verdict::NotMeasured,
+            Verdict::AwaitingMeasurement,
             Verdict::NeverLanded,
         ];
         for verdict in wide_marks {

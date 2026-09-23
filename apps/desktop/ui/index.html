@@ -105,7 +105,20 @@
       <p class="state-line" data-state-line>在聽</p>
       <!-- 只有使用者點上面的 button 才會填字；開場、輪詢與 timer 都不碰這一格。 -->
       <p class="persona-line" data-persona-line aria-live="polite" hidden></p>
-      <p class="usage-reset-line" data-usage-reset-line aria-live="polite" hidden></p>
+      <details class="cli-status" data-cli-status>
+        <summary>CLI 登入與用量</summary>
+        <p>這四支 CLI 的狀態查詢不提供剩餘額度與重置時間，這裡不猜。下面只列本機記到的用量。</p>
+        <ul data-cli-rows aria-live="polite">
+          <li>claude：尚未查詢</li><li>codex：尚未查詢</li>
+          <li>grok：尚未查詢</li><li>gemini：尚未查詢</li>
+        </ul>
+        <button type="button" data-cli-refresh>重新查詢</button>
+        <button type="button" data-cli-cancel hidden>停止查詢</button>
+        <p data-cli-outbound aria-live="polite">今天 AI-Sister 的大腦外送：尚未查詢</p>
+        <p>LimitReset 全球產品重置紀錄，不是你的帳號額度。</p>
+        <p data-cli-board aria-live="polite">尚未讀取</p>
+        <p class="usage-reset-line" data-usage-reset-line aria-live="polite" hidden></p>
+      </details>
       <!-- 固定錄音與本機系統語音仍只能從 click 播。Azure 只在獨立同意
            與預設關閉的自動朗讀開關都有效時，播放使用者新提問的最新答案。 -->
       <audio data-persona-audio preload="none" hidden></audio>
@@ -171,6 +184,7 @@
         <aside class="hands-log" data-hands-log aria-label="行動紀錄"></aside>
         <!-- 每一筆答案都掛著出處。沒有出處的那一行不會出現在這裡。 -->
         <ul class="hits" data-hits hidden></ul>
+        <button class="hits-close" type="button" data-hits-close hidden>收起</button>
       </section>
     </main>
 
@@ -219,5 +233,6 @@
     <script src="./persona-consent-voices/v1/manifest.js"></script>
     <script src="./persona-banter-voices/v1/manifest.js"></script>
     <script type="module" src="./app.js"></script>
+    <script type="module" src="./cli-status.js"></script>
   </body>
 </html>

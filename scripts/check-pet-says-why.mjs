@@ -21,6 +21,7 @@
  * `setPaused` → `paint()`），和輪詢走的是同一條，只是不必真的等五秒。
  */
 
+import { spawnSync } from "node:child_process";
 import { runInNewContext } from "node:vm";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -45,6 +46,38 @@ for (const [word, why] of LADDER_WORDS) {
   }
 }
 const boot = loader(read(SRC));
+const APP_SOURCE = read(SRC);
+
+function functionRanges(source) {
+  const ranges = [];
+  for (const match of source.matchAll(/\b(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*\{/gu)) {
+    const open = source.indexOf("{", match.index);
+    let depth = 0;
+    for (let cursor = open; cursor < source.length; cursor++) {
+      if (source[cursor] === "{") depth++;
+      else if (source[cursor] === "}" && --depth === 0) {
+        ranges.push({ name: match[1], start: match.index, end: cursor + 1, body: source.slice(open + 1, cursor) });
+        break;
+      }
+    }
+  }
+  return ranges;
+}
+const APP_FUNCTIONS = functionRanges(APP_SOURCE);
+const hasHitsWrites = [];
+for (const pattern of [
+  /document\.body\.classList\.(?:add|remove)\(["']has-hits["']\)/gu,
+  /\b(?:showAnswerHits|hideAnswerHits)\(\)/gu,
+]) {
+  for (const match of APP_SOURCE.matchAll(pattern)) {
+    const owner = APP_FUNCTIONS.find(fn => match.index >= fn.start && match.index < fn.end);
+    if (!owner || owner.name === "showAnswerHits" ||
+        (match[0] === "hideAnswerHits()" && owner.name === "hideAnswerHits")) continue;
+    hasHitsWrites.push(owner);
+  }
+}
+const uniqueHasHitsWriters = [...new Map(hasHitsWrites.map(fn => [fn.name, fn])).values()];
+const writersWithoutPaint = uniqueHasHitsWriters.filter(fn => !/\bpaintConversation\(\)/u.test(fn.body));
 
 /*
  * 開場的 `hidden` 要跟 index.html 一樣，不能跟著假 DOM 的預設值走。詳細的
@@ -53,6 +86,11 @@ const boot = loader(read(SRC));
  */
 const HTML = read(join(UI, "index.html"));
 const hiddenInHtml = (sel) => hiddenIn(HTML, sel);
+
+if (!/<button\b[^>]*data-hits-close[^>]*>收起<\/button>/u.test(HTML)) {
+  console.log("  ✗ A150 回答裡有一顆逐字是「收起」的按鈕");
+  process.exit(1);
+}
 
 // 前提本身也要驗一次。哪天 index.html 把那個 `hidden` 拿掉，這幾條測試會
 // 悄悄變成「驗一個不存在的問題」——寧可在這裡就吵。
@@ -365,6 +403,7 @@ async function open(
   // `domOf` 只生得出 index.html 上真的有的東西——見 fake-dom.mjs 開頭那段。
   const node = domOf(HTML);
   const listeners = new Map();
+  const windowListeners = new Map();
   const calls = [];
   const diagnoseNotes = [];
   const invokes = [];
@@ -421,7 +460,9 @@ async function open(
     visibilityState: "visible",
   });
   globalThis.location = { search };
-  globalThis.addEventListener = () => {};
+  globalThis.addEventListener = (name, cb) => {
+    (windowListeners.get(name) ?? windowListeners.set(name, []).get(name)).push(cb);
+  };
   globalThis.removeEventListener = () => {};
   globalThis.matchMedia = () => ({ matches: false, addEventListener() {} });
   // 她那扇窗是固定的 340×560（`resizable: false`，見 tauri.conf.json）。
@@ -606,6 +647,7 @@ async function open(
     urlPolicyActions: () => node("[data-url-policy-actions]"),
     urlPolicyResult: () => node("[data-url-policy-result]"),
     utterance: () => node("[data-utterance]"),
+    body: () => globalThis.document.body,
     handsLog: () => node("[data-hands-log]"),
     /** 從這個視窗**以外**發生的事：系統匣的按鈕、熱鍵、她自己停掉。 */
     async fromOutside(name, payload) {
@@ -623,6 +665,10 @@ async function open(
       for (const fn of element.handlers.click ?? []) fn({ isTrusted: trusted });
       await tick();
       return true;
+    },
+    async key(key) {
+      for (const fn of windowListeners.get("keydown") ?? []) fn({ key });
+      await tick();
     },
     async type(q) {
       node("[data-ask-input]").value = q;
@@ -666,6 +712,80 @@ function check(name, ok, detail) {
     if (detail !== undefined) console.log(`      實際：${JSON.stringify(detail)}`);
   }
 }
+
+// 執行產品原碼的探針；假動畫在下一個 tick 才完成，CSS 在此前仍回 visible。
+const observationSource = APP_FUNCTIONS.filter(fn => fn.name === "observation")
+  .map(fn => APP_SOURCE.slice(fn.start, fn.end));
+const chromeSources = [...APP_SOURCE.matchAll(
+  /(?:let chromeBarObservationGeneration = 0;\s*)?const noteTheChromeBar = observation\([\s\S]*?\n\}\);/gu,
+)].map(match => match[0]);
+check("R8 observation 至少抽到一項且唯一", observationSource.length === 1);
+check("R8 chrome 探針至少抽到一項且唯一", chromeSources.length === 1);
+if (observationSource.length === 1 && chromeSources.length === 1) {
+  const probe = (animations) => {
+    const notes = [];
+    let open = false;
+    let hidden = false;
+    const context = {
+      invoke: () => {},
+      document: { body: { classList: { contains: () => open } } },
+      chromeBar: { getAnimations: animations },
+      getComputedStyle: () => ({ visibility: hidden ? "hidden" : "visible" }),
+      noteForDiagnosis: note => notes.push(note),
+    };
+    const sample = runInNewContext(
+      observationSource[0] + "\n" + chromeSources[0] + "\nnoteTheChromeBar;", context,
+    );
+    return { notes, sample, setOpen: value => { open = value; },
+      setHidden: value => { hidden = value; } };
+  };
+  let finish;
+  const animation = { finished: new Promise(resolve => { finish = resolve; }) };
+  const delayed = probe(() => [animation]);
+  delayed.sample();
+  check("R8 過場完成前不送觀測", delayed.notes.length === 0);
+  await tick();
+  delayed.setHidden(true);
+  finish();
+  await tick();
+  check("R8 等過場後送出的 dragbar_hidden 是 true",
+    delayed.notes.length === 1 && delayed.notes[0].dragbar_hidden === true, delayed.notes);
+
+  let cancel;
+  const interrupted = { finished: new Promise((_, reject) => { cancel = reject; }) };
+  // 等待邏輯被突變拿掉時，夾具自己的取消也不能殺掉整支閘門。
+  interrupted.finished.catch(() => {});
+  const rapid = probe(() => [interrupted]);
+  rapid.sample();
+  rapid.setOpen(true);
+  rapid.sample();
+  cancel(new Error("transition cancelled"));
+  await tick();
+  check("R8 連按丟掉舊取樣且中斷過場仍送最新一則",
+    rapid.notes.length === 1 && rapid.notes[0].open === true, rapid.notes);
+
+  const legacy = probe(undefined);
+  legacy.setHidden(true);
+  legacy.sample();
+  check("R8 沒有 getAnimations 仍當場送一則",
+    legacy.notes.length === 1 && legacy.notes[0].dragbar_hidden === true, legacy.notes);
+
+  // 真子行程用 strict 模式：拿掉 thenable 接手時，父測試仍能印出具名紅燈。
+  const child = spawnSync("timeout", ["300", process.execPath, "--unhandled-rejections=strict", "-e",
+    "const invoke = () => {};\n" + observationSource[0] + `
+      observation(() => Promise.reject(new Error("measure rejected")))();
+      observation(() => ({ then(resolve, reject) { reject(new Error("thenable rejected")); } }))();
+      setTimeout(() => console.log("R8 main continued"), 20);
+    `], { encoding: "utf8" });
+  check("R8 observation 接住拒絕的 thenable，子行程主線跑完",
+    child.status === 0 && child.stdout.includes("R8 main continued"),
+    { status: child.status, stderr: child.stderr });
+}
+
+console.log("A150. has-hits 寫入端會在同一個函式重畫對話");
+check("A150 has-hits 寫入端真的抽到至少一個", uniqueHasHitsWriters.length >= 1);
+check("A150 每個 has-hits 寫入端同函式呼叫 paintConversation", writersWithoutPaint.length === 0,
+  writersWithoutPaint.map(fn => fn.name).join(", "));
 
 console.log("A149. 首次選角、同意按鈕、保存的朗讀開關");
 {
@@ -767,6 +887,69 @@ console.log("A149. 首次選角、同意按鈕、保存的朗讀開關");
 if (process.env.A149_ONLY === "1") process.exit(failed ? 1 : 0);
 
 const CONSENT = "第一張同意書還沒簽——她不會開始記錄。在系統匣圖示上按右鍵，選「四張同意書…」簽好再回來";
+
+console.log("A150. 回答氣泡收得起來，流程與獨立區塊不受影響");
+{
+  const p = await open({
+    ask: answer({ hits: [hit()] }),
+    recording_state: "recording",
+  });
+  await p.type("第一題");
+  const close = p.node("[data-hits-close]");
+  check(
+    "A150 回答裡有一顆逐字是「收起」的按鈕",
+    /<button\b[^>]*data-hits-close[^>]*>收起<\/button>/u.test(HTML) && !close.hidden,
+  );
+
+  await p.click("[data-hits-close]");
+  check("A150 收起鍵拿掉 has-hits 並藏起回答", !p.body().classList.contains("has-hits") && p.hits().hidden);
+  check("A150 收起後氣泡裡的控制不留在 Tab 順序", p.hits().hidden && close.hidden);
+
+  await p.type("第二題");
+  check("A150 收起後下一次回答重新顯示氣泡", p.body().classList.contains("has-hits") && !p.hits().hidden && !close.hidden);
+  await p.key("Escape");
+  check("A150 Esc 拿掉 has-hits 並藏起回答", !p.body().classList.contains("has-hits") && p.hits().hidden && close.hidden);
+}
+{
+  let asks = 0;
+  const collapsedThenFailed = await open({
+    ask: () => ++asks === 1 ? answer({ hits: [hit()] }) : Promise.reject(new Error("fixture failed")),
+    recording_state: "recording",
+  });
+  await collapsedThenFailed.type("先答成");
+  await collapsedThenFailed.click("[data-hits-close]");
+  await collapsedThenFailed.type("再失敗");
+  check("A150 收起後下一題失敗只說這題沒答成", collapsedThenFailed.hitTexts().includes("這一題我沒答成。") &&
+    collapsedThenFailed.hitTexts().every(text => !text.includes("先收起來了")), collapsedThenFailed.hitTexts().join(" | "));
+}
+{
+  const waitingUrl = await open({
+    ask: answer({ hits: [hit()] }),
+    recording_state: "recording",
+    url_policy_read: urlPolicy(),
+  });
+  await waitingUrl.type("先顯示回答");
+  check("A150 回答顯示時網址政策題被壓住", waitingUrl.urlPolicy().hidden);
+  await waitingUrl.click("[data-hits-close]");
+  check("A150 收起回答當場重畫網址政策題", !waitingUrl.urlPolicy().hidden);
+}
+{
+  const consent = await open(
+    { consent_read: consentView([false, false, false, false], [false, false, false, false]) },
+  );
+  const close = consent.node("[data-hits-close]");
+  check("A150 同意書顯示時收起鍵不出現", !consent.consentGuide().hidden && close.hidden);
+  await consent.key("Escape");
+  check("A150 Esc 不會關掉同意書", !consent.consentGuide().hidden && consent.body().classList.contains("has-consent-guide"));
+}
+{
+  const first = await open(
+    { consent_read: consentView([false, false, false, false], [false, false, false, false]) },
+    { autoFirstPersona: false },
+  );
+  await first.key("Escape");
+  check("A150 Esc 不會關掉第一次選角", !first.node("[data-persona-first-run]").hidden && first.body().classList.contains("has-consent-guide"));
+}
 
 console.log("① 按「開始記錄」，後端說同意書還沒簽");
 {

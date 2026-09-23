@@ -83,6 +83,7 @@ const urlPolicyQuestion = document.querySelector("[data-url-policy-question]");
 const urlPolicyActions = document.querySelector("[data-url-policy-actions]");
 const urlPolicyNote = document.querySelector("[data-url-policy-note]");
 const urlPolicyResult = document.querySelector("[data-url-policy-result]");
+const hitsClose = document.querySelector("[data-hits-close]");
 
 // ---------- Persona catalog ----------
 
@@ -848,7 +849,9 @@ function observation(measure) {
   return (...args) => {
     if (invoke === null) return;
     try {
-      measure(...args);
+      const result = measure(...args);
+      // async 量測的錯誤不會進同步 catch；接住 thenable，避免未處理的拒絕帶走主線。
+      if (typeof result?.then === "function") Promise.resolve(result).catch(() => {});
     } catch {
       // 量不到就算了。診斷是配角，配角不可以把主角帶走。
     }
@@ -919,8 +922,14 @@ const noteThePersonaPack = observation(() => {
 });
 
 /** 上面那一槓現在的樣子。收起來的時候它該是 `visibility: hidden`。 */
-const noteTheChromeBar = observation(() => {
+let chromeBarObservationGeneration = 0;
+const noteTheChromeBar = observation(async () => {
+  const mine = ++chromeBarObservationGeneration;
   const open = document.body.classList.contains("chrome-open");
+  const animations = chromeBar.getAnimations?.() ?? [];
+  if (animations.length) await Promise.allSettled(animations.map((a) => a.finished));
+  // 連按時寧可少記幾次翻動，也不把舊狀態配上新畫面送出去。
+  if (mine !== chromeBarObservationGeneration) return;
   let hidden = false;
   try {
     hidden = getComputedStyle(chromeBar).visibility === "hidden";
@@ -2246,6 +2255,7 @@ function showConsentGuide(view) {
   consentResult.classList.remove("bad");
   consentGuide.hidden = false;
   hitList.hidden = true;
+  hitsClose.hidden = true;
   document.body.classList.remove("has-hits");
   document.body.classList.add("has-consent-guide");
   paintConsentListen();
@@ -2263,6 +2273,7 @@ function showFirstPersona() {
   consentGuide.hidden = true;
   firstPersona.hidden = false;
   hitList.hidden = true;
+  hitsClose.hidden = true;
   document.body.classList.add("has-consent-guide");
   setConsentGuideInput(false);
   paintConversation();
@@ -2345,6 +2356,26 @@ function hideConsentGuide() {
   setConsentGuideInput(true);
 }
 
+function showAnswerHits() {
+  hitList.hidden = false;
+  hitsClose.hidden = false;
+  document.body.classList.add("has-hits");
+}
+
+function hideAnswerHits() {
+  if (!consentGuide.hidden || !firstPersona.hidden) return;
+  document.body.classList.remove("has-hits");
+  hitList.hidden = true;
+  hitsClose.hidden = true;
+  showingAnswer = false;
+  paintConversation();
+}
+
+hitsClose?.addEventListener("click", hideAnswerHits);
+globalThis.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") hideAnswerHits();
+});
+
 function showConsentCompletion(view) {
   const message = document.createElement("li");
   message.className = "persona-dialogue";
@@ -2352,8 +2383,7 @@ function showConsentCompletion(view) {
     ? "四張都問完了。日後可從上方齒輪查看或更改；按「開始記錄」後，我才會開始看。"
     : "四張都問完了。沒有同意的功能維持關閉；日後可從上方齒輪查看或更改。";
   hitList.replaceChildren(message);
-  hitList.hidden = false;
-  document.body.classList.add("has-hits");
+  showAnswerHits();
   showingAnswer = false;
   paintConversation();
 }
@@ -6110,8 +6140,7 @@ function renderHits(
       azureAnswerLine = answerAzureLine();
       hitList.append(azureAnswerLine);
     }
-    hitList.hidden = false;
-    document.body.classList.add("has-hits");
+    showAnswerHits();
     paintConversation();
     showingAnswer = hasOverviewAnswer;
     return;
@@ -6360,8 +6389,7 @@ function renderHits(
     hitList.append(azureAnswerLine);
   }
 
-  hitList.hidden = false;
-  document.body.classList.add("has-hits");
+  showAnswerHits();
   paintConversation();
   // **不是無條件 `true`。** [`showingAnswer`] 的唯一讀者是那句「底下原本那幾筆
   // 是上一題的」，而空手而回的那一次底下躺的是「我記得的東西裡沒有這件事。」
@@ -6540,8 +6568,7 @@ async function ask(event = null) {
     // 塞進一個 `display: none` 的容器裡，狀態那一行也只是一句錯誤訊息。
     // 也就是說這條路對「資料庫打不開」的新機器完全沉默——而那正是它要講話的
     // 那一台。答成過一次之後才會自己好，所以它專挑新使用者。
-    hitList.hidden = false;
-    document.body.classList.add("has-hits");
+    showAnswerHits();
     paintConversation();
   } finally {
     if (gaveUp !== null) noteTheAskThatFailed(question, gaveUp);
@@ -7214,8 +7241,8 @@ if (browserDemoQuery && params.get("hits") === "none") {
  * 「這一輪什麼時候開的」只送一次——換角色不代表重新開始，而把兩件事塞進同
  * 一則，自檢那一節的涵蓋範圍會在他換一次角色的時候悄悄往前跳。
  *
- * 那一槓也要在這裡送一次：它的預設狀態是「不在」，而**沒有人回報過的預設
- * 狀態，在報告上和「沒量過」長得一模一樣**。
+ * 那一槓在這裡啟動量測：等過場結束後才取樣，連按時捨棄舊取樣。
+ * 尚未收到樣本時，報告只說「尚未收到量測結果」，不把預設收起當成量過。
  */
 noteForDiagnosis({ kind: "started", at: Date.now() });
 noteThePersonaPack();

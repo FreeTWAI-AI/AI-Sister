@@ -224,6 +224,7 @@ struct Shell {
     /// 的隱私面。代價是重開機之後這本簿子是空的，而報告會把那句話印出來。
     diagnostics: Mutex<sister_core::diagnose::Notebook>,
     usage: usage_status::Runtime,
+    cli_status: Arc<brain_cli::LoginStatus>,
     /// renderer 說「游標剛動了，現在就去看」。
     ///
     /// 和 `hit_solid` 是兩件事：那個是**算答案的材料**，這個是**該重算了的
@@ -1285,6 +1286,7 @@ fn dispatch_master_stop_menu(app: &tauri::AppHandle, menu_id: &str) {
     };
     if matches!(action, MasterStopAction::Engage) {
         let shell = app.state::<Shell>();
+        shell.cli_status.cancel();
         usage_status::stop_intent(&shell.usage);
         let _ = app.emit(
             "usage-status-changed",
@@ -5914,6 +5916,36 @@ fn start_usage_poll_thread(app: tauri::AppHandle) {
         .ok();
 }
 
+#[tauri::command(async)]
+async fn cli_status_read(
+    shell: tauri::State<'_, Shell>,
+    refresh: bool,
+) -> Result<Vec<brain_cli::LoginRow>, String> {
+    if usage_is_stopped(&shell) {
+        return Err("查詢已停止".to_owned());
+    }
+    let runtime = Arc::clone(&shell.cli_status);
+    let claim = brain_cli::begin(&runtime.state)?;
+    tauri::async_runtime::spawn_blocking(move || runtime.read(claim, refresh))
+        .await
+        .map_err(|_| "問不到；請重新查詢".to_owned())?
+}
+
+#[tauri::command]
+fn cli_status_cancel(shell: tauri::State<'_, Shell>) {
+    shell.cli_status.cancel();
+}
+
+#[tauri::command(async)]
+fn cli_status_outbound(shell: tauri::State<'_, Shell>) -> Result<u32, String> {
+    let day = sister_core::brain::local_day_key(sister_core::now_ms())
+        .ok_or_else(|| "問不到今天的趟數".to_owned())?;
+    with_db(&shell, |db| {
+        db.brain_outbound_count_on(&day)
+            .map_err(|_| "問不到今天的趟數".to_owned())
+    })
+}
+
 #[tauri::command]
 fn usage_status_read(shell: tauri::State<'_, Shell>) -> usage_status::UsageStatusView {
     usage_status::read_view(
@@ -7745,6 +7777,7 @@ fn main() {
             azure_tts_transition: Arc::new(Mutex::new(())),
             local_tts: local_tts::Runtime::new(),
             usage: usage_status::Runtime::new(),
+            cli_status: Arc::new(brain_cli::LoginStatus::default()),
             brain_cli_state: Arc::new(std::sync::atomic::AtomicU8::new(0)),
             answer_cli: Mutex::new(None),
             diagnostics: Mutex::new(sister_core::diagnose::Notebook::new()),
@@ -7799,6 +7832,9 @@ fn main() {
             local_tts::local_tts_config_set,
             local_tts::local_tts_cancel,
             local_tts::local_tts_speak,
+            cli_status_read,
+            cli_status_cancel,
+            cli_status_outbound,
             usage_status_read,
             usage_public_status_set,
             usage_public_status_refresh,
