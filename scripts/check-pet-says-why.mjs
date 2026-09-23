@@ -54,6 +54,11 @@ const boot = loader(read(SRC));
 const HTML = read(join(UI, "index.html"));
 const hiddenInHtml = (sel) => hiddenIn(HTML, sel);
 
+if (!/<button\b[^>]*data-hits-close[^>]*>收起<\/button>/u.test(HTML)) {
+  console.log("  ✗ A150 回答裡有一顆逐字是「收起」的按鈕");
+  process.exit(1);
+}
+
 // 前提本身也要驗一次。哪天 index.html 把那個 `hidden` 拿掉，這幾條測試會
 // 悄悄變成「驗一個不存在的問題」——寧可在這裡就吵。
 if (!hiddenInHtml("[data-hits]")) {
@@ -365,6 +370,7 @@ async function open(
   // `domOf` 只生得出 index.html 上真的有的東西——見 fake-dom.mjs 開頭那段。
   const node = domOf(HTML);
   const listeners = new Map();
+  const windowListeners = new Map();
   const calls = [];
   const diagnoseNotes = [];
   const invokes = [];
@@ -421,7 +427,9 @@ async function open(
     visibilityState: "visible",
   });
   globalThis.location = { search };
-  globalThis.addEventListener = () => {};
+  globalThis.addEventListener = (name, cb) => {
+    (windowListeners.get(name) ?? windowListeners.set(name, []).get(name)).push(cb);
+  };
   globalThis.removeEventListener = () => {};
   globalThis.matchMedia = () => ({ matches: false, addEventListener() {} });
   // 她那扇窗是固定的 340×560（`resizable: false`，見 tauri.conf.json）。
@@ -606,6 +614,7 @@ async function open(
     urlPolicyActions: () => node("[data-url-policy-actions]"),
     urlPolicyResult: () => node("[data-url-policy-result]"),
     utterance: () => node("[data-utterance]"),
+    body: () => globalThis.document.body,
     handsLog: () => node("[data-hands-log]"),
     /** 從這個視窗**以外**發生的事：系統匣的按鈕、熱鍵、她自己停掉。 */
     async fromOutside(name, payload) {
@@ -623,6 +632,10 @@ async function open(
       for (const fn of element.handlers.click ?? []) fn({ isTrusted: trusted });
       await tick();
       return true;
+    },
+    async key(key) {
+      for (const fn of windowListeners.get("keydown") ?? []) fn({ key });
+      await tick();
     },
     async type(q) {
       node("[data-ask-input]").value = q;
@@ -767,6 +780,49 @@ console.log("A149. 首次選角、同意按鈕、保存的朗讀開關");
 if (process.env.A149_ONLY === "1") process.exit(failed ? 1 : 0);
 
 const CONSENT = "第一張同意書還沒簽——她不會開始記錄。在系統匣圖示上按右鍵，選「四張同意書…」簽好再回來";
+
+console.log("A150. 回答氣泡收得起來，流程與獨立區塊不受影響");
+{
+  const p = await open({
+    ask: answer({ hits: [hit()] }),
+    recording_state: "recording",
+  });
+  await p.type("第一題");
+  const close = p.node("[data-hits-close]");
+  check(
+    "A150 回答裡有一顆逐字是「收起」的按鈕",
+    /<button\b[^>]*data-hits-close[^>]*>收起<\/button>/u.test(HTML) && !close.hidden,
+  );
+
+  p.utterance().hidden = false;
+  p.urlPolicy().hidden = false;
+  await p.click("[data-hits-close]");
+  check("A150 收起鍵拿掉 has-hits 並藏起回答", !p.body().classList.contains("has-hits") && p.hits().hidden);
+  check("A150 收起後氣泡裡的控制不留在 Tab 順序", p.hits().hidden && close.hidden);
+  check("A150 收起回答不動主動開口與網址問題", !p.utterance().hidden && !p.urlPolicy().hidden);
+
+  await p.type("第二題");
+  check("A150 收起後下一次回答重新顯示氣泡", p.body().classList.contains("has-hits") && !p.hits().hidden && !close.hidden);
+  await p.key("Escape");
+  check("A150 Esc 拿掉 has-hits 並藏起回答", !p.body().classList.contains("has-hits") && p.hits().hidden && close.hidden);
+}
+{
+  const consent = await open(
+    { consent_read: consentView([false, false, false, false], [false, false, false, false]) },
+  );
+  const close = consent.node("[data-hits-close]");
+  check("A150 同意書顯示時收起鍵不出現", !consent.consentGuide().hidden && close.hidden);
+  await consent.key("Escape");
+  check("A150 Esc 不會關掉同意書", !consent.consentGuide().hidden && consent.body().classList.contains("has-consent-guide"));
+}
+{
+  const first = await open(
+    { consent_read: consentView([false, false, false, false], [false, false, false, false]) },
+    { autoFirstPersona: false },
+  );
+  await first.key("Escape");
+  check("A150 Esc 不會關掉第一次選角", !first.node("[data-persona-first-run]").hidden && first.body().classList.contains("has-consent-guide"));
+}
 
 console.log("① 按「開始記錄」，後端說同意書還沒簽");
 {
