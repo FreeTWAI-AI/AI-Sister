@@ -1,5 +1,21 @@
 # AI-Sister
 
+<!-- freedom-repository-guide:start -->
+## 在自由工坊的位置
+
+[自由工坊](https://freetwai.com) 讓會員先完成定位、選擇公會並領取 Repo 技能書，再以供貨、商店、開源作品、行銷與小隊共同完成成果。
+
+AI 導入與開發公會可研究的本機記憶／桌面工具。 保留上游本機記錄、記憶、CLI brain 與 consent 邊界的程式與產品文件。
+
+工坊 fork 沒有平台會員同步、雲端記憶儲存或新的桌面 release；平台整合仍需獨立設計與本人同意。
+
+工坊 Fork：上游產品／授權來源為 [teddashh/AI-Sister](https://github.com/teddashh/AI-Sister)；本次協作的 Issue／PR 送到 **FreeTWAI-AI/AI-Sister**，不是自動送往上游。
+
+程式／內容入口：[docs/PRODUCT.md](docs/PRODUCT.md)、[docs/PHASES.md](docs/PHASES.md)、[docs/HANDOFF-CODEX.md](docs/HANDOFF-CODEX.md)、[crates/](crates/)、[apps/desktop/](apps/desktop/)。協作先讀 [CONTRIBUTING.md](CONTRIBUTING.md)，讓 Agent 讀 [AGENTS.md](AGENTS.md)；從[本倉 Issues](https://github.com/FreeTWAI-AI/AI-Sister/issues)認領、[查看既有 PR](https://github.com/FreeTWAI-AI/AI-Sister/pulls)避免重工。
+
+本機截圖、OCR、記憶資料不能因加入公會上傳中央 DB。沿用上游 AGENTS 的分開同意／精確 outbound 規則，保持資料可刪除；既有上游 release 指示不視為工坊 fork 的自動發版授權。 跨 repo 的協定由[中央平台](https://github.com/FreeTWAI-AI/freedom-platform)維護。
+<!-- freedom-repository-guide:end -->
+
 > 一個站在桌面角落的姊妹。她一直都在，看得見你的一天，記得住細節，
 > 95% 的時間安靜，該說話的時候才說話——說的每一句都能點開證據。
 >
