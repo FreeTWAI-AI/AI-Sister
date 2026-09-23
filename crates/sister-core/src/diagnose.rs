@@ -445,6 +445,7 @@ pub enum Verdict {
 impl Verdict {
     // Rust 沒有內建 enum iterator；測試逐一走這份清單，mark／say 的 match
     // 不留 `_`，新增變體卻沒接上報告時必須編譯失敗。
+    // verdict_all_covers_source_variants 另從原始碼核對 ALL，漏列也不能通過。
     #[cfg(test)]
     const ALL: [Self; 7] = [
         Self::AsAsked,
@@ -3543,16 +3544,80 @@ mod notebook_tests {
         );
     }
 
+    // 只接受無欄位的變體與行註解；每個逗號之間必須整段都是識別字。
+    // 不用 find/filter 抽部分命中：屬性、欄位、判別值、區塊註解等都當場拒絕。
+    fn verdict_names_from_source(source: &str) -> Vec<String> {
+        let (_, tail) = source
+            .split_once("pub enum Verdict {")
+            .expect("找不到 enum Verdict 的開頭");
+        let uncommented = tail
+            .lines()
+            .map(|line| line.split_once("//").map_or(line, |(code, _)| code))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let (body, _) = uncommented
+            .split_once('}')
+            .expect("找不到 enum Verdict 的結尾");
+        let mut names = Vec::new();
+        for part in body.trim().trim_end_matches(',').split(',') {
+            let name = part.trim();
+            assert!(
+                !name.is_empty()
+                    && name.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+                    && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'),
+                "enum Verdict 有未解析內容：{name:?}"
+            );
+            names.push(name.to_owned());
+        }
+        assert!(!names.is_empty(), "enum Verdict 至少要抽到一個變體");
+        names
+    }
+
     #[test]
-    fn all_seven_verdict_marks_are_distinct() {
+    fn verdict_all_covers_source_variants() {
+        let names = verdict_names_from_source(include_str!("diagnose.rs"));
+        let listed: Vec<_> = Verdict::ALL.iter().map(|v| format!("{v:?}")).collect();
+        assert!(!listed.is_empty(), "ALL 至少要取得一個變體");
+        for name in &names {
+            assert!(listed.contains(name), "Verdict::ALL 漏列變體：{name}");
+        }
+        for name in &listed {
+            assert!(names.contains(name), "Verdict::ALL 多列變體：{name}");
+        }
+        assert_eq!(names.len(), listed.len(), "Verdict::ALL 不可重複列變體");
+    }
+
+    #[test]
+    fn verdict_source_parser_consumes_every_variant() {
+        assert_eq!(
+            verdict_names_from_source("pub enum Verdict { One, Two, // comment with }\n Three }"),
+            ["One", "Two", "Three"]
+        );
+        for body in [
+            "",
+            "One, Hidden(u8)",
+            "One, Hidden { field: u8 }",
+            "One, Hidden = 3",
+            "One, #[cfg(test)] Hidden",
+            "One, /* comment */ Hidden",
+        ] {
+            let source = format!("pub enum Verdict {{ {body} }}");
+            assert!(
+                std::panic::catch_unwind(|| verdict_names_from_source(&source)).is_err(),
+                "未解析內容不可放過：{body:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn all_verdict_marks_are_distinct() {
         let marks: std::collections::HashSet<_> =
             Verdict::ALL.into_iter().map(Verdict::mark).collect();
         assert!(!marks.is_empty(), "至少要取得一個 Verdict 記號");
-        assert_eq!(Verdict::ALL.len(), 7, "必須走遍七個 Verdict 變體");
         assert_eq!(
             marks.len(),
             Verdict::ALL.len(),
-            "七個 Verdict 記號必須兩兩不同"
+            "所有 Verdict 記號必須兩兩不同"
         );
     }
 
