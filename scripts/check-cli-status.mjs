@@ -78,28 +78,82 @@ const answerMax = declaration(answerRule?.body ?? '', 'max-height');
 const answerMaxMatch = answerMax?.match(/^calc\(100%\s*-\s*(\d+(?:\.\d+)?)px\)$/u);
 if (!answerMaxMatch) throw new Error(`CSS 形狀讀不懂：.answer-bubble 的 max-height: ${answerMax}`);
 const answerBottom = answerTop + windowHeight - Number(answerMaxMatch[1]);
+// 例外是產品決定，不是靠錨點在氣泡外推定安全。
+const overlayExceptions = [
+  { selector: '.ask', reason: '答案出現時仍須讓使用者輸入下一句，不能隱藏輸入框。' },
+  { selector: '.ask-thinking', reason: '輸入框的等待狀態須保留，答案出現時仍能接著輸入。' },
+  { selector: '.dragbar', reason: '一般狀態收起；chrome 開啟或全停時可見，氣泡讓到 top:49px，避開拖曳條的 7…41px。' },
+];
+const selectorsOf = rule => rule.selector.split(',').map(item => item.trim());
+const matchingRules = selector => rules.filter(rule => selectorsOf(rule).includes(selector));
+check('overlay-exceptions-extracted', overlayExceptions.length >= 1);
+const emptyReasons = overlayExceptions.filter(entry => typeof entry.reason !== 'string' || !entry.reason.trim());
+check('overlay-exception-reasons-nonempty', emptyReasons.length === 0);
+if (emptyReasons.length) console.log(`    例外缺少理由：${emptyReasons.map(entry => entry.selector).join(', ')}`);
+const staleExceptions = overlayExceptions.filter(entry => matchingRules(entry.selector).length === 0);
+check('overlay-exception-selectors-exist', staleExceptions.length === 0);
+if (staleExceptions.length) console.log(`    styles.css 沒有例外 selector：${staleExceptions.map(entry => entry.selector).join(', ')}`);
+const exempt = selector => overlayExceptions.some(entry => entry.selector === selector && typeof entry.reason === 'string' && entry.reason.trim());
+const missingInputExceptions = ['.ask', '.ask-thinking'].filter(selector => !exempt(selector));
+check('overlay-input-exceptions-retained', missingInputExceptions.length === 0);
+if (missingInputExceptions.length) console.log(`    輸入層必須保留具名例外：${missingInputExceptions.join(', ')}`);
+const dragHiddenRules = matchingRules('body:not(.chrome-open):not(.she-is-stopped) .dragbar');
+const chromeAnswerRules = matchingRules('body.chrome-open .answer-bubble');
+const stoppedAnswerRules = matchingRules('body.she-is-stopped .answer-bubble');
+const dragRules = matchingRules('.dragbar');
+check('overlay-dragbar-premise-rules-extracted', [dragHiddenRules, chromeAnswerRules, stoppedAnswerRules, dragRules].every(items => items.length >= 1));
+const dragbarPremisesHold =
+  dragHiddenRules.some(rule => declaration(rule.body, 'visibility') === 'hidden') &&
+  [chromeAnswerRules, stoppedAnswerRules].every(items => items.some(rule => declaration(rule.body, 'top') === '49px')) &&
+  dragRules.some(rule => declaration(rule.body, 'top') === '7px' && declaration(rule.body, 'height') === '34px');
+check('overlay-dragbar-exception-premises', dragbarPremisesHold);
+// 檢查真 CSS 值，不能只在例外理由裡聲稱有避開。
+if (!dragbarPremisesHold) {
+  console.log('    .dragbar 例外前提不成立：收起須 visibility:hidden，chrome-open／she-is-stopped 氣泡須 top:49px，拖曳條須佔 7…41px');
+}
 const overlappingAbove = [];
+const unknownAbove = [];
+const higherSelectors = [];
 for (const rule of absoluteRules) {
   const zText = declaration(rule.body, 'z-index');
   if (zText === null) continue;
   if (!/^-?\d+$/u.test(zText)) throw new Error(`CSS 形狀讀不懂：${rule.selector} 的 z-index: ${zText}`);
   if (Number(zText) <= answerZ) continue;
+  higherSelectors.push(...selectorsOf(rule));
   const top = declaration(rule.body, 'top');
   const bottom = declaration(rule.body, 'bottom');
   if (top === null && bottom === null) throw new Error(`CSS 形狀讀不懂：${rule.selector} 沒有 top 或 bottom`);
-  const ys = [];
-  if (top !== null) ys.push(px(top, rule.selector, 'top'));
-  if (bottom !== null) ys.push(windowHeight - px(bottom, rule.selector, 'bottom'));
-  if (ys.some(y => y >= answerTop && y <= answerBottom)) overlappingAbove.push(rule.selector);
+  const topY = top === null ? null : px(top, rule.selector, 'top');
+  const bottomY = bottom === null ? null : windowHeight - px(bottom, rule.selector, 'bottom');
+  const heights = [];
+  for (const property of ['height', 'max-height']) {
+    const value = declaration(rule.body, property);
+    if (value === null || value === 'auto' || value === 'none') continue;
+    if (/^\d+(?:\.\d+)?px$/u.test(value)) heights.push(px(value, rule.selector, property));
+    else if (!/^\d+(?:\.\d+)?(?:vh|%)$/u.test(value)) {
+      throw new Error(`CSS 形狀讀不懂：${rule.selector} 的 ${property}: ${value}`);
+    }
+  }
+  let range = null;
+  if (topY !== null && bottomY !== null) range = [topY, bottomY];
+  else if (heights.length) {
+    const height = Math.min(...heights);
+    range = topY !== null ? [topY, topY + height] : [bottomY - height, bottomY];
+  }
+  // 無 px 高度（包括文字自動高度、vh 上限）不能用錨點排除。
+  if (range === null) unknownAbove.push(...selectorsOf(rule));
+  else if (range[0] <= answerBottom && range[1] >= answerTop) overlappingAbove.push(...selectorsOf(rule));
 }
+check('overlay-higher-selectors-extracted', higherSelectors.length >= 1);
 check('overlay-overlapping-higher-selectors-extracted', overlappingAbove.length >= 1);
 const hiddenFor = (selector, state) => rules.some(rule =>
   declaration(rule.body, 'display') === 'none' &&
-  rule.selector.split(',').some(item => item.trim() === `body.${state} ${selector}`));
-const unhidden = overlappingAbove.flatMap(selector => ['has-hits', 'has-consent-guide']
-  .filter(state => !hiddenFor(selector, state)).map(state => `${selector} / ${state}`));
+  selectorsOf(rule).includes(`body.${state} ${selector}`));
+const unhidden = [...new Set([...overlappingAbove, ...unknownAbove])].filter(selector => !exempt(selector))
+  .flatMap(selector => ['has-hits', 'has-consent-guide']
+    .filter(state => !hiddenFor(selector, state)).map(state => `${selector} / ${state}`));
 check('overlay-higher-overlaps-hidden-for-every-bubble', unhidden.length === 0);
-if (unhidden.length) console.log(`    氣泡出現時仍會蓋住它：${unhidden.join(', ')}`);
+if (unhidden.length) console.log(`    與氣泡重疊或高度無法定界，且沒有隱藏規則或具名例外：${unhidden.join(', ')}`);
 const nativeReadBody = bracedBody(nativeSource, /async fn cli_status_read\s*\(/);
 const failureReasonBody = bracedBody(source, /function failureReason\s*\(/);
 check('native-stop-function-extracted', nativeReadBody !== null);
