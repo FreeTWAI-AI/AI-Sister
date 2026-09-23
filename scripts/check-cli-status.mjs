@@ -4,6 +4,8 @@ import { runInNewContext } from 'node:vm';
 import { spawnSync } from 'node:child_process';
 const html = readFileSync('apps/desktop/ui/index.html', 'utf8');
 const source = readFileSync('apps/desktop/ui/cli-status.js', 'utf8');
+const styles = readFileSync('apps/desktop/ui/styles.css', 'utf8');
+const tauriConfig = JSON.parse(readFileSync('apps/desktop/src-tauri/tauri.conf.json', 'utf8'));
 const nativeSource = readFileSync('apps/desktop/src-tauri/src/main.rs', 'utf8');
 const usageViewSource = readFileSync('crates/sister-usage/src/view.rs', 'utf8');
 let passed = 0;
@@ -27,6 +29,77 @@ function bracedBody(text, startPattern) {
 function captures(text, pattern) {
   return [...text.matchAll(pattern)].map(match => match[1]);
 }
+function cssRules(text) {
+  const clean = text.replace(/\/\*[\s\S]*?\*\//g, '');
+  const rules = [];
+  let cursor = 0;
+  while (cursor < clean.length) {
+    const open = clean.indexOf('{', cursor);
+    if (open < 0) break;
+    const selector = clean.slice(cursor, open).trim();
+    let depth = 1;
+    let close = open + 1;
+    for (; close < clean.length && depth > 0; close++) {
+      if (clean[close] === '{') depth++;
+      else if (clean[close] === '}') depth--;
+    }
+    if (depth !== 0) throw new Error(`CSS 形狀讀不懂：${selector} 的大括號沒有關閉`);
+    const body = clean.slice(open + 1, close - 1);
+    if (selector.startsWith('@')) {
+      if (/\b(?:position|top|bottom|z-index)\s*:/u.test(body)) {
+        throw new Error(`CSS 形狀讀不懂：${selector} 裡改了定位`);
+      }
+    } else {
+      rules.push({ selector, body });
+    }
+    cursor = close;
+  }
+  return rules;
+}
+function declaration(body, name) {
+  return body.match(new RegExp(`(?:^|;)\\s*${name}\\s*:\\s*([^;]+)`, 'u'))?.[1].trim() ?? null;
+}
+function px(value, selector, property) {
+  const match = value?.match(/^(-?\d+(?:\.\d+)?)px$/u);
+  if (!match) throw new Error(`CSS 形狀讀不懂：${selector} 的 ${property}: ${value}`);
+  return Number(match[1]);
+}
+const rules = cssRules(styles);
+const absoluteRules = rules.filter(rule => declaration(rule.body, 'position') === 'absolute');
+check('overlay-absolute-selectors-extracted', absoluteRules.length >= 1);
+const answerRule = rules.find(rule => rule.selector.split(',').map(item => item.trim()).includes('.answer-bubble'));
+const answerZText = answerRule && declaration(answerRule.body, 'z-index');
+const answerZ = answerZText !== null && /^-?\d+$/u.test(answerZText) ? Number(answerZText) : null;
+check('overlay-answer-z-index-extracted', Number.isFinite(answerZ));
+const windowHeight = tauriConfig?.app?.windows?.find(window => window.label === 'pet')?.height;
+check('overlay-window-height-extracted', Number.isFinite(windowHeight) && windowHeight > 0);
+const answerTop = px(declaration(answerRule?.body ?? '', 'top'), '.answer-bubble', 'top');
+const answerMax = declaration(answerRule?.body ?? '', 'max-height');
+const answerMaxMatch = answerMax?.match(/^calc\(100%\s*-\s*(\d+(?:\.\d+)?)px\)$/u);
+if (!answerMaxMatch) throw new Error(`CSS 形狀讀不懂：.answer-bubble 的 max-height: ${answerMax}`);
+const answerBottom = answerTop + windowHeight - Number(answerMaxMatch[1]);
+const overlappingAbove = [];
+for (const rule of absoluteRules) {
+  const zText = declaration(rule.body, 'z-index');
+  if (zText === null) continue;
+  if (!/^-?\d+$/u.test(zText)) throw new Error(`CSS 形狀讀不懂：${rule.selector} 的 z-index: ${zText}`);
+  if (Number(zText) <= answerZ) continue;
+  const top = declaration(rule.body, 'top');
+  const bottom = declaration(rule.body, 'bottom');
+  if (top === null && bottom === null) throw new Error(`CSS 形狀讀不懂：${rule.selector} 沒有 top 或 bottom`);
+  const ys = [];
+  if (top !== null) ys.push(px(top, rule.selector, 'top'));
+  if (bottom !== null) ys.push(windowHeight - px(bottom, rule.selector, 'bottom'));
+  if (ys.some(y => y >= answerTop && y <= answerBottom)) overlappingAbove.push(rule.selector);
+}
+check('overlay-overlapping-higher-selectors-extracted', overlappingAbove.length >= 1);
+const hiddenFor = (selector, state) => rules.some(rule =>
+  declaration(rule.body, 'display') === 'none' &&
+  rule.selector.split(',').some(item => item.trim() === `body.${state} ${selector}`));
+const unhidden = overlappingAbove.flatMap(selector => ['has-hits', 'has-consent-guide']
+  .filter(state => !hiddenFor(selector, state)).map(state => `${selector} / ${state}`));
+check('overlay-higher-overlaps-hidden-for-every-bubble', unhidden.length === 0);
+if (unhidden.length) console.log(`    氣泡出現時仍會蓋住它：${unhidden.join(', ')}`);
 const nativeReadBody = bracedBody(nativeSource, /async fn cli_status_read\s*\(/);
 const failureReasonBody = bracedBody(source, /function failureReason\s*\(/);
 check('native-stop-function-extracted', nativeReadBody !== null);
@@ -80,6 +153,8 @@ function boot(responses = {}, desktop = true) {
   const elements = new Map();
   const events = {};
   const calls = [];
+  const bodyClasses = new Set();
+  let mutationCallback = null;
   const el = key => {
     if (!elements.has(key)) elements.set(key, {textContent:'', open:false, hidden:false, disabled:false, handlers:{}, children:[], addEventListener(n,f){this.handlers[n]=f;}, replaceChildren(...v){this.children=v;}});
     return elements.get(key);
@@ -90,8 +165,10 @@ function boot(responses = {}, desktop = true) {
     return typeof r === 'function' ? r() : r;
   });}}, event:{listen(name,fn){events[name]=fn;}}}};
   if (!desktop) delete window.__TAURI__;
-  runInNewContext(source, {__TAURI__:window.__TAURI__,document:{querySelector:el,createElement:() => ({textContent:''})},window});
-  return {el,calls,events, rows:()=>el('[data-cli-rows]').children.map(v=>v.textContent).join('\n')};
+  const body = {classList:{contains:name => bodyClasses.has(name)}};
+  class MutationObserver { constructor(callback){ mutationCallback=callback; } observe(){} }
+  runInNewContext(source, {__TAURI__:window.__TAURI__,document:{body,querySelector:el,createElement:() => ({textContent:''})},window,MutationObserver});
+  return {el,calls,events, rows:()=>el('[data-cli-rows]').children.map(v=>v.textContent).join('\n'), setBubble(state, shown){ if (shown) bodyClasses.add(state); else bodyClasses.delete(state); mutationCallback?.(); }};
 }
 const tick = () => new Promise(r => setTimeout(r, 10));
 const p = boot({cli_status_read:[{id:'claude',status:'已登入（oauth） · 帳號：fixture@example.test · 方案：pro'},{id:'codex',status:'已登入（ChatGPT）'},{id:'grok',status:'已安裝'},{id:'gemini',status:'未安裝'}],cli_status_outbound:0,usage_status_read:{config_readable:true,enabled:false}});
@@ -133,6 +210,15 @@ closed.el('[data-cli-status]').open=false;closed.el('[data-cli-status]').handler
 finishClosed([{id:'claude',status:'late hidden account'}]);await tick();
 check('active-collapse-cancels-native',closed.calls.some(c=>c[0]==='cli_status_cancel'));
 check('active-collapse-discards-late-result',!closed.rows().includes('late hidden account'));
+let finishBubble;
+const covered = boot({cli_status_read:()=>new Promise(r=>{finishBubble=r;})});
+covered.el('[data-cli-status]').open=true;covered.el('[data-cli-status]').handlers.toggle();await tick();
+covered.setBubble('has-consent-guide', true);await tick();
+finishBubble([{id:'claude',status:'late covered account'}]);await tick();
+check('bubble-hides-and-cancels-active-probe', !covered.el('[data-cli-status]').open && covered.calls.some(c=>c[0]==='cli_status_cancel') && !covered.rows().includes('late covered account'));
+covered.setBubble('has-consent-guide', false);
+covered.el('[data-cli-status]').open=true;covered.el('[data-cli-status]').handlers.toggle();await tick();
+check('bubble-close-restores-working-panel', covered.calls.filter(c=>c[0]==='cli_status_read').length===2);
 const failed = boot({cli_status_read:new Error('IPC failed')});
 failed.el('[data-cli-status]').open=true;failed.el('[data-cli-status]').handlers.toggle();await tick();
 check('ipc-failure-all-rows-unknown',failed.el('[data-cli-rows]').children.every(r=>r.textContent.includes('問不到')));
@@ -174,6 +260,9 @@ check('ipc-failure-board-can-retry', failed.el('[data-cli-board]').textContent.i
 const native = spawnSync('cargo', ['test', '-p', 'sister-core', '--test', 'desktop_cli_status', 'actual_timeout_is_unknown', '--', '--nocapture'], { encoding: 'utf8', timeout: 120_000 });
 process.stdout.write(native.stdout ?? '');
 if (native.status !== 0) process.stderr.write(native.stderr ?? '');
+const runnerUsable = native.error === undefined && native.signal === null && native.status === 0;
+check('timeout-native-runner-usable', runnerUsable);
+if (!runnerUsable) console.log(`    exit=${String(native.status)} signal=${String(native.signal)} error=${native.error ? String(native.error) : 'none'}；這是量測工具沒跑起來，不是產品的判斷`);
 const totals = [...(native.stdout ?? '').matchAll(/(\d+) passed; (\d+) failed/g)];
 check('timeout-native-test-ran', totals.reduce((sum, m) => sum + Number(m[1]) + Number(m[2]), 0) >= 1);
 const receipt = native.stdout?.match(/^CLI_STATUS_TIMEOUT_ROW=(.+)$/m);

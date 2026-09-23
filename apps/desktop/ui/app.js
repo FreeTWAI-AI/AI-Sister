@@ -2359,6 +2359,8 @@ function hideAnswerHits() {
   document.body.classList.remove("has-hits");
   hitList.hidden = true;
   hitsClose.hidden = true;
+  showingAnswer = false;
+  paintConversation();
 }
 
 hitsClose?.addEventListener("click", hideAnswerHits);

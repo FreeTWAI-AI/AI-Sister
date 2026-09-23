@@ -1543,6 +1543,14 @@ body.has-consent-guide .answer-bubble {
   max-height: 45vh;
   overflow-y: auto;
 }
+body.has-hits .cli-status,
+body.has-consent-guide .cli-status,
+body.has-hits .utterance,
+body.has-consent-guide .utterance,
+body.has-hits .asked,
+body.has-consent-guide .asked {
+  display: none;
+}
 .cli-status summary { cursor: pointer; }
 .cli-status ul { padding-left: 18px; }
 .cli-status p, .cli-status li { margin: 6px 0; }

@@ -45,6 +45,38 @@ for (const [word, why] of LADDER_WORDS) {
   }
 }
 const boot = loader(read(SRC));
+const APP_SOURCE = read(SRC);
+
+function functionRanges(source) {
+  const ranges = [];
+  for (const match of source.matchAll(/\b(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*\{/gu)) {
+    const open = source.indexOf("{", match.index);
+    let depth = 0;
+    for (let cursor = open; cursor < source.length; cursor++) {
+      if (source[cursor] === "{") depth++;
+      else if (source[cursor] === "}" && --depth === 0) {
+        ranges.push({ name: match[1], start: match.index, end: cursor + 1, body: source.slice(open + 1, cursor) });
+        break;
+      }
+    }
+  }
+  return ranges;
+}
+const APP_FUNCTIONS = functionRanges(APP_SOURCE);
+const hasHitsWrites = [];
+for (const pattern of [
+  /document\.body\.classList\.(?:add|remove)\(["']has-hits["']\)/gu,
+  /\b(?:showAnswerHits|hideAnswerHits)\(\)/gu,
+]) {
+  for (const match of APP_SOURCE.matchAll(pattern)) {
+    const owner = APP_FUNCTIONS.find(fn => match.index >= fn.start && match.index < fn.end);
+    if (!owner || owner.name === "showAnswerHits" ||
+        (match[0] === "hideAnswerHits()" && owner.name === "hideAnswerHits")) continue;
+    hasHitsWrites.push(owner);
+  }
+}
+const uniqueHasHitsWriters = [...new Map(hasHitsWrites.map(fn => [fn.name, fn])).values()];
+const writersWithoutPaint = uniqueHasHitsWriters.filter(fn => !/\bpaintConversation\(\)/u.test(fn.body));
 
 /*
  * 開場的 `hidden` 要跟 index.html 一樣，不能跟著假 DOM 的預設值走。詳細的
@@ -680,6 +712,11 @@ function check(name, ok, detail) {
   }
 }
 
+console.log("A150. has-hits 寫入端會在同一個函式重畫對話");
+check("A150 has-hits 寫入端真的抽到至少一個", uniqueHasHitsWriters.length >= 1);
+check("A150 每個 has-hits 寫入端同函式呼叫 paintConversation", writersWithoutPaint.length === 0,
+  writersWithoutPaint.map(fn => fn.name).join(", "));
+
 console.log("A149. 首次選角、同意按鈕、保存的朗讀開關");
 {
   const fresh = () => consentView([false, false, false, false], [false, false, false, false]);
@@ -794,17 +831,37 @@ console.log("A150. 回答氣泡收得起來，流程與獨立區塊不受影響"
     /<button\b[^>]*data-hits-close[^>]*>收起<\/button>/u.test(HTML) && !close.hidden,
   );
 
-  p.utterance().hidden = false;
-  p.urlPolicy().hidden = false;
   await p.click("[data-hits-close]");
   check("A150 收起鍵拿掉 has-hits 並藏起回答", !p.body().classList.contains("has-hits") && p.hits().hidden);
   check("A150 收起後氣泡裡的控制不留在 Tab 順序", p.hits().hidden && close.hidden);
-  check("A150 收起回答不動主動開口與網址問題", !p.utterance().hidden && !p.urlPolicy().hidden);
 
   await p.type("第二題");
   check("A150 收起後下一次回答重新顯示氣泡", p.body().classList.contains("has-hits") && !p.hits().hidden && !close.hidden);
   await p.key("Escape");
   check("A150 Esc 拿掉 has-hits 並藏起回答", !p.body().classList.contains("has-hits") && p.hits().hidden && close.hidden);
+}
+{
+  let asks = 0;
+  const collapsedThenFailed = await open({
+    ask: () => ++asks === 1 ? answer({ hits: [hit()] }) : Promise.reject(new Error("fixture failed")),
+    recording_state: "recording",
+  });
+  await collapsedThenFailed.type("先答成");
+  await collapsedThenFailed.click("[data-hits-close]");
+  await collapsedThenFailed.type("再失敗");
+  check("A150 收起後下一題失敗只說這題沒答成", collapsedThenFailed.hitTexts().includes("這一題我沒答成。") &&
+    collapsedThenFailed.hitTexts().every(text => !text.includes("先收起來了")), collapsedThenFailed.hitTexts().join(" | "));
+}
+{
+  const waitingUrl = await open({
+    ask: answer({ hits: [hit()] }),
+    recording_state: "recording",
+    url_policy_read: urlPolicy(),
+  });
+  await waitingUrl.type("先顯示回答");
+  check("A150 回答顯示時網址政策題被壓住", waitingUrl.urlPolicy().hidden);
+  await waitingUrl.click("[data-hits-close]");
+  check("A150 收起回答當場重畫網址政策題", !waitingUrl.urlPolicy().hidden);
 }
 {
   const consent = await open(

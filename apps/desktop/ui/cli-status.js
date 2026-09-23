@@ -9,6 +9,10 @@ const invoke = globalThis.__TAURI__?.core?.invoke ?? null;
 const ids = ['claude', 'codex', 'grok', 'gemini'];
 let generation = 0;
 let busy = false;
+function bubbleVisible() {
+  return document.body.classList.contains('has-hits') ||
+    document.body.classList.contains('has-consent-guide');
+}
 function paintRows(values, fallback = '問不到；請重新查詢') {
   rows.replaceChildren(...ids.map(id => {
     const li = document.createElement('li');
@@ -36,7 +40,7 @@ function paintBoard(view) {
   }
 }
 async function readStatus(force = false) {
-  if (busy || !panel.open) return;
+  if (busy || !panel.open || bubbleVisible()) return;
   if (!invoke) {
     const reason = '這裡查不到；請在桌面程式裡查看';
     paintRows([], reason);
@@ -52,7 +56,7 @@ async function readStatus(force = false) {
   cancel.hidden = false;
   paintRows([], '查詢中');
   outbound.textContent = '今天 AI-Sister 的大腦外送：查詢中';
-  const valid = () => current === generation && panel.open;
+  const valid = () => current === generation && panel.open && !bubbleVisible();
   await Promise.allSettled([
     invoke('cli_status_read', { refresh: force }).then(value => {
       if (valid()) paintRows(value);
@@ -84,12 +88,17 @@ async function stop() {
   finally { refresh.disabled = false; }
 }
 panel.addEventListener('toggle', () => {
-  if (panel.open) void readStatus();
+  if (panel.open && !bubbleVisible()) void readStatus();
   else void stop().catch(() => {});
 });
 refresh.addEventListener('click', event => { if (event.isTrusted) void readStatus(true); });
 cancel.addEventListener('click', event => { if (event.isTrusted) void stop().catch(() => {}); });
 window.addEventListener('pagehide', () => { void stop().catch(() => {}); });
+new MutationObserver(() => {
+  if (!bubbleVisible()) return;
+  panel.open = false;
+  void stop().catch(() => {});
+}).observe(document.body, { attributes: true, attributeFilter: ['class'] });
 window.__TAURI__?.event?.listen?.('usage-status-changed', event => {
   if (panel.open) paintBoard(event.payload);
 });
