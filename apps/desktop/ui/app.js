@@ -849,7 +849,9 @@ function observation(measure) {
   return (...args) => {
     if (invoke === null) return;
     try {
-      measure(...args);
+      const result = measure(...args);
+      // async 量測的錯誤不會進同步 catch；接住 thenable，避免未處理的拒絕帶走主線。
+      if (typeof result?.then === "function") Promise.resolve(result).catch(() => {});
     } catch {
       // 量不到就算了。診斷是配角，配角不可以把主角帶走。
     }
@@ -920,8 +922,14 @@ const noteThePersonaPack = observation(() => {
 });
 
 /** 上面那一槓現在的樣子。收起來的時候它該是 `visibility: hidden`。 */
-const noteTheChromeBar = observation(() => {
+let chromeBarObservationGeneration = 0;
+const noteTheChromeBar = observation(async () => {
+  const mine = ++chromeBarObservationGeneration;
   const open = document.body.classList.contains("chrome-open");
+  const animations = chromeBar.getAnimations?.() ?? [];
+  if (animations.length) await Promise.allSettled(animations.map((a) => a.finished));
+  // 連按時寧可少記幾次翻動，也不把舊狀態配上新畫面送出去。
+  if (mine !== chromeBarObservationGeneration) return;
   let hidden = false;
   try {
     hidden = getComputedStyle(chromeBar).visibility === "hidden";

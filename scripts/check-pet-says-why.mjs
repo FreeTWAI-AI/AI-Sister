@@ -21,6 +21,7 @@
  * `setPaused` → `paint()`），和輪詢走的是同一條，只是不必真的等五秒。
  */
 
+import { spawnSync } from "node:child_process";
 import { runInNewContext } from "node:vm";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -710,6 +711,75 @@ function check(name, ok, detail) {
     failed++;
     if (detail !== undefined) console.log(`      實際：${JSON.stringify(detail)}`);
   }
+}
+
+// 執行產品原碼的探針；假動畫在下一個 tick 才完成，CSS 在此前仍回 visible。
+const observationSource = APP_FUNCTIONS.filter(fn => fn.name === "observation")
+  .map(fn => APP_SOURCE.slice(fn.start, fn.end));
+const chromeSources = [...APP_SOURCE.matchAll(
+  /(?:let chromeBarObservationGeneration = 0;\s*)?const noteTheChromeBar = observation\([\s\S]*?\n\}\);/gu,
+)].map(match => match[0]);
+check("R8 observation 至少抽到一項且唯一", observationSource.length === 1);
+check("R8 chrome 探針至少抽到一項且唯一", chromeSources.length === 1);
+if (observationSource.length === 1 && chromeSources.length === 1) {
+  const probe = (animations) => {
+    const notes = [];
+    let open = false;
+    let hidden = false;
+    const context = {
+      invoke: () => {},
+      document: { body: { classList: { contains: () => open } } },
+      chromeBar: { getAnimations: animations },
+      getComputedStyle: () => ({ visibility: hidden ? "hidden" : "visible" }),
+      noteForDiagnosis: note => notes.push(note),
+    };
+    const sample = runInNewContext(
+      observationSource[0] + "\n" + chromeSources[0] + "\nnoteTheChromeBar;", context,
+    );
+    return { notes, sample, setOpen: value => { open = value; },
+      setHidden: value => { hidden = value; } };
+  };
+  let finish;
+  const animation = { finished: new Promise(resolve => { finish = resolve; }) };
+  const delayed = probe(() => [animation]);
+  delayed.sample();
+  check("R8 過場完成前不送觀測", delayed.notes.length === 0);
+  await tick();
+  delayed.setHidden(true);
+  finish();
+  await tick();
+  check("R8 等過場後送出的 dragbar_hidden 是 true",
+    delayed.notes.length === 1 && delayed.notes[0].dragbar_hidden === true, delayed.notes);
+
+  let cancel;
+  const interrupted = { finished: new Promise((_, reject) => { cancel = reject; }) };
+  // 等待邏輯被突變拿掉時，夾具自己的取消也不能殺掉整支閘門。
+  interrupted.finished.catch(() => {});
+  const rapid = probe(() => [interrupted]);
+  rapid.sample();
+  rapid.setOpen(true);
+  rapid.sample();
+  cancel(new Error("transition cancelled"));
+  await tick();
+  check("R8 連按丟掉舊取樣且中斷過場仍送最新一則",
+    rapid.notes.length === 1 && rapid.notes[0].open === true, rapid.notes);
+
+  const legacy = probe(undefined);
+  legacy.setHidden(true);
+  legacy.sample();
+  check("R8 沒有 getAnimations 仍當場送一則",
+    legacy.notes.length === 1 && legacy.notes[0].dragbar_hidden === true, legacy.notes);
+
+  // 真子行程用 strict 模式：拿掉 thenable 接手時，父測試仍能印出具名紅燈。
+  const child = spawnSync("timeout", ["300", process.execPath, "--unhandled-rejections=strict", "-e",
+    "const invoke = () => {};\n" + observationSource[0] + `
+      observation(() => Promise.reject(new Error("measure rejected")))();
+      observation(() => ({ then(resolve, reject) { reject(new Error("thenable rejected")); } }))();
+      setTimeout(() => console.log("R8 main continued"), 20);
+    `], { encoding: "utf8" });
+  check("R8 observation 接住拒絕的 thenable，子行程主線跑完",
+    child.status === 0 && child.stdout.includes("R8 main continued"),
+    { status: child.status, stderr: child.stderr });
 }
 
 console.log("A150. has-hits 寫入端會在同一個函式重畫對話");
