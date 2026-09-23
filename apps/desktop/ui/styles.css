@@ -871,6 +871,11 @@ body.has-consent-guide .answer-bubble {
   display: flex;
 }
 
+.hits-close {
+  align-self: flex-end;
+  margin-top: 8px;
+}
+
 .consent-guide {
   display: flex;
   flex: 1;

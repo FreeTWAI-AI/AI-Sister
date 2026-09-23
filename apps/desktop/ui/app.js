@@ -83,6 +83,7 @@ const urlPolicyQuestion = document.querySelector("[data-url-policy-question]");
 const urlPolicyActions = document.querySelector("[data-url-policy-actions]");
 const urlPolicyNote = document.querySelector("[data-url-policy-note]");
 const urlPolicyResult = document.querySelector("[data-url-policy-result]");
+const hitsClose = document.querySelector("[data-hits-close]");
 
 // ---------- Persona catalog ----------
 
@@ -2246,6 +2247,7 @@ function showConsentGuide(view) {
   consentResult.classList.remove("bad");
   consentGuide.hidden = false;
   hitList.hidden = true;
+  hitsClose.hidden = true;
   document.body.classList.remove("has-hits");
   document.body.classList.add("has-consent-guide");
   paintConsentListen();
@@ -2263,6 +2265,7 @@ function showFirstPersona() {
   consentGuide.hidden = true;
   firstPersona.hidden = false;
   hitList.hidden = true;
+  hitsClose.hidden = true;
   document.body.classList.add("has-consent-guide");
   setConsentGuideInput(false);
   paintConversation();
@@ -2345,6 +2348,24 @@ function hideConsentGuide() {
   setConsentGuideInput(true);
 }
 
+function showAnswerHits() {
+  hitList.hidden = false;
+  hitsClose.hidden = false;
+  document.body.classList.add("has-hits");
+}
+
+function hideAnswerHits() {
+  if (!consentGuide.hidden || !firstPersona.hidden) return;
+  document.body.classList.remove("has-hits");
+  hitList.hidden = true;
+  hitsClose.hidden = true;
+}
+
+hitsClose?.addEventListener("click", hideAnswerHits);
+globalThis.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") hideAnswerHits();
+});
+
 function showConsentCompletion(view) {
   const message = document.createElement("li");
   message.className = "persona-dialogue";
@@ -2352,8 +2373,7 @@ function showConsentCompletion(view) {
     ? "四張都問完了。日後可從上方齒輪查看或更改；按「開始記錄」後，我才會開始看。"
     : "四張都問完了。沒有同意的功能維持關閉；日後可從上方齒輪查看或更改。";
   hitList.replaceChildren(message);
-  hitList.hidden = false;
-  document.body.classList.add("has-hits");
+  showAnswerHits();
   showingAnswer = false;
   paintConversation();
 }
@@ -6110,8 +6130,7 @@ function renderHits(
       azureAnswerLine = answerAzureLine();
       hitList.append(azureAnswerLine);
     }
-    hitList.hidden = false;
-    document.body.classList.add("has-hits");
+    showAnswerHits();
     paintConversation();
     showingAnswer = hasOverviewAnswer;
     return;
@@ -6360,8 +6379,7 @@ function renderHits(
     hitList.append(azureAnswerLine);
   }
 
-  hitList.hidden = false;
-  document.body.classList.add("has-hits");
+  showAnswerHits();
   paintConversation();
   // **不是無條件 `true`。** [`showingAnswer`] 的唯一讀者是那句「底下原本那幾筆
   // 是上一題的」，而空手而回的那一次底下躺的是「我記得的東西裡沒有這件事。」
@@ -6540,8 +6558,7 @@ async function ask(event = null) {
     // 塞進一個 `display: none` 的容器裡，狀態那一行也只是一句錯誤訊息。
     // 也就是說這條路對「資料庫打不開」的新機器完全沉默——而那正是它要講話的
     // 那一台。答成過一次之後才會自己好，所以它專挑新使用者。
-    hitList.hidden = false;
-    document.body.classList.add("has-hits");
+    showAnswerHits();
     paintConversation();
   } finally {
     if (gaveUp !== null) noteTheAskThatFailed(question, gaveUp);
